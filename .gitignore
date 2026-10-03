@@ -1,0 +1,13 @@
+node_modules/
+.env
+.env.local
+.env.*.local
+npm-debug.log*
+dist/
+*.tsbuildinfo
+Git/
+/Git-2.56.0-64-bit.exe
+/verification.txt
+/debug-browser.js
+/test-referrals.js
+/server/server/private-uploads/
