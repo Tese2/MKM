@@ -14,6 +14,7 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       proxy: {
         '/api': apiUrl || 'http://localhost:4000',
+        '/uploads': apiUrl || 'http://localhost:4000',
       },
     },
   };

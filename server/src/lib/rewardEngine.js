@@ -8,14 +8,10 @@ export function buildDefaultRewardRules() {
       frequency: 'DAILY',
       status: 'ACTIVE',
     },
-    {
-      name: 'Milestone reward',
-      ruleType: 'MILESTONE',
-      thresholdAmount: 8000,
-      rewardAmount: 800,
-      frequency: 'ONCE',
-      status: 'ACTIVE',
-    },
+    { name: '5,000 ETB deposit milestone', ruleType: 'MILESTONE', thresholdAmount: 5000, rewardAmount: 500, frequency: 'ONCE', status: 'ACTIVE' },
+    { name: '8,000 ETB deposit milestone', ruleType: 'MILESTONE', thresholdAmount: 8000, rewardAmount: 800, frequency: 'ONCE', status: 'ACTIVE' },
+    { name: '20,000 ETB deposit milestone', ruleType: 'MILESTONE', thresholdAmount: 20000, rewardAmount: 2000, frequency: 'ONCE', status: 'ACTIVE' },
+    { name: '50,000 ETB deposit milestone', ruleType: 'MILESTONE', thresholdAmount: 50000, rewardAmount: 8000, frequency: 'ONCE', status: 'ACTIVE' },
     {
       name: 'Weekly reward',
       ruleType: 'WEEKLY',

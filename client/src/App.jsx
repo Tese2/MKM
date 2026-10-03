@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { ArrowDownToLine, ArrowUpFromLine, Bell, CheckCircle2, Copy, FileText, Gift, LayoutDashboard, LogOut, Menu, MessageCircle, Package, ShieldCheck, UserCircle, Users, Wallet, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { BrowserRouter, Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { api, jsonBody } from './services/api.js';
+import { api, assetUrl, jsonBody } from './services/api.js';
 import PublicWebsite from './PublicWebsite.jsx';
 import welcomePromotionImage from './welcome-promotion.svg';
 import { getProductImage } from './productImages.js';
@@ -29,6 +29,12 @@ const rateFraction = (rate) => {
   const value = Number(rate ?? 0);
   return value > 1 ? value / 100 : value;
 };
+
+async function uploadAdminImage(file) {
+  const form = new FormData();
+  form.append('image', file);
+  return api('/admin/uploads/image', { method: 'POST', body: form });
+}
 
 export default function App() {
   return (
@@ -164,7 +170,13 @@ function AppRoutes() {
   }
 
   async function signOut() {
-    await api('/auth/logout', { method: 'POST' }).catch(() => undefined);
+    setError('');
+    try {
+      await api('/auth/logout', { method: 'POST' });
+    } catch (cause) {
+      setError(cause.message);
+      return;
+    }
     setUser(null);
     setDashboard(null);
     setProducts([]);
@@ -506,6 +518,23 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
     }
   }
 
+  async function saveWelcomePage(event) {
+    event.preventDefault();
+    setError('');
+    setNotice('');
+    try {
+      const formData = new FormData(event.currentTarget);
+      const payload = Object.fromEntries(formData.entries());
+      payload.welcomeExamplePrice = Number(payload.welcomeExamplePrice);
+      payload.welcomeExampleDailyEarnings = Number(payload.welcomeExampleDailyEarnings);
+      await api('/admin/support/welcome', { method: 'PUT', ...jsonBody(payload) });
+      setSupport(await api('/admin/support'));
+      setNotice('Welcome page updated successfully.');
+    } catch (cause) {
+      setError(cause.message);
+    }
+  }
+
   useEffect(() => {
     if (!user || user.role !== 'ADMIN') {
       navigate('/admin/login', { replace: true });
@@ -543,11 +572,14 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
     { to: '/admin/customers', label: 'Customers' },
     { to: '/admin/recharges', label: 'Recharges' },
     { to: '/admin/withdrawals', label: 'Withdrawals' },
+    { to: '/admin/rewards', label: 'Rewards' },
+    { to: '/admin/referrals', label: 'Referrals' },
     { to: '/admin/audit-logs', label: 'Audit Logs' },
     { to: '/admin/products', label: 'Products' },
     { to: '/admin/payment-methods', label: 'Payment Methods' },
     { to: '/admin/support', label: 'Support' },
     { to: '/admin/about', label: 'About Page' },
+    { to: '/admin/welcome', label: 'Welcome Page' },
     { to: '/admin/settings/links', label: 'Public Links' },
     { to: '/admin/password', label: 'Change Password' },
   ];
@@ -563,13 +595,19 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
       return <AdminPasswordPage onError={setError} onNotice={setNotice} />;
     }
     if (currentPath === '/admin/products') {
-      return <AdminProductsPage products={products} />;
+      return <AdminProductsPage products={products} onUploadImage={uploadAdminImage} />;
     }
     if (currentPath === '/admin/recharges') {
       return <AdminRechargesPage />;
     }
     if (currentPath === '/admin/withdrawals') {
       return <AdminWithdrawalsPage />;
+    }
+    if (currentPath === '/admin/rewards') {
+      return <AdminRewardsPage onError={setError} onNotice={setNotice} />;
+    }
+    if (currentPath === '/admin/referrals') {
+      return <AdminReferralsPage onError={setError} />;
     }
     if (currentPath === '/admin/audit-logs') {
       return <AdminAuditLogsPage />;
@@ -582,6 +620,9 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
     }
     if (currentPath === '/admin/about') {
       return <AdminAboutPage support={support} onSave={saveAboutPage} />;
+    }
+    if (currentPath === '/admin/welcome') {
+      return <AdminWelcomePage support={support} onSave={saveWelcomePage} onUploadImage={uploadAdminImage} onError={setError} />;
     }
     if (currentPath === '/admin/settings/links') {
       return <AdminPublicLinksPage />;
@@ -915,11 +956,12 @@ function AdminPasswordPage({ onError, onNotice }) {
   );
 }
 
-function AdminProductsPage({ products }) {
+function AdminProductsPage({ products, onUploadImage }) {
   const [items, setItems] = useState(products ?? []);
   const [editingId, setEditingId] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [imageUploading, setImageUploading] = useState(false);
   const [form, setForm] = useState({
     name: '',
     price: '300.00',
@@ -977,6 +1019,21 @@ function AdminProductsPage({ products }) {
         imageUrl: form.imageUrl || null,
         availableFrom: form.availableFrom && !clearExpiredSchedule ? new Date(form.availableFrom).toISOString() : null,
         availableUntil: form.availableUntil && !clearExpiredSchedule ? new Date(form.availableUntil).toISOString() : null,
+      };
+
+      const handleImageUpload = async (file) => {
+        if (!file) return;
+        setError('');
+        setImageUploading(true);
+        try {
+          const uploaded = await onUploadImage(file);
+          setForm((current) => ({ ...current, imageUrl: uploaded.imageUrl }));
+          setNotice('Product image uploaded. Save the product to apply it.');
+        } catch (cause) {
+          setError(cause.message || 'Unable to upload product image.');
+        } finally {
+          setImageUploading(false);
+        }
       };
 
       if (editingId) {
@@ -1092,7 +1149,10 @@ function AdminProductsPage({ products }) {
         <label className='field'>
           <span>Product Image URL</span>
           <input type='url' value={form.imageUrl} onChange={(e) => setForm({ ...form, imageUrl: e.target.value })} placeholder='https://example.com/product-image.webp' />
-          <small>Shown in customer and public product catalogs. Change this URL to customize the image.</small>
+          <span className='image-upload-control'>
+            <input type='file' accept='image/jpeg,image/png,image/webp' disabled={imageUploading} onChange={(event) => { handleImageUpload(event.target.files?.[0]); event.target.value = ''; }} />
+            <small>{imageUploading ? 'Uploading image…' : 'Or choose a JPG, PNG, or WEBP image (up to 5 MB). Save the product to apply changes.'}</small>
+          </span>
           <img className='admin-product-image-preview' src={getProductImage({ imageUrl: form.imageUrl, displayOrder: form.displayOrder })} alt='Product image preview' />
         </label>
 
@@ -1102,7 +1162,7 @@ function AdminProductsPage({ products }) {
         </label>
 
         <div className='button-row'>
-          <button className='primary-button' type='submit'>
+          <button className='primary-button' type='submit' disabled={imageUploading}>
             {editingId ? 'Update Product' : 'Add New Product'} <span>↗</span>
           </button>
           {editingId && (
@@ -1693,6 +1753,234 @@ function AdminAuditLogsPage() {
   );
 }
 
+function AdminRewardsPage({ onError, onNotice }) {
+  const [claims, setClaims] = useState([]);
+  const [rules, setRules] = useState([]);
+  const [status, setStatus] = useState('');
+  const [editingRule, setEditingRule] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [rejectingId, setRejectingId] = useState('');
+  const [rejectNote, setRejectNote] = useState('');
+
+  const refresh = async () => {
+    try {
+      const [claimData, ruleData] = await Promise.all([api('/admin/rewards'), api('/admin/rewards/rules')]);
+      setClaims(claimData);
+      setRules(ruleData);
+    } catch (cause) {
+      onError(cause.message);
+    }
+  };
+  useEffect(() => { refresh(); }, []);
+
+  const saveRule = async (event) => {
+    event.preventDefault();
+    setSaving(true);
+    const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    data.thresholdAmount = Number(data.thresholdAmount);
+    data.rewardAmount = Number(data.rewardAmount);
+    try {
+      await api(editingRule?.id ? `/admin/rewards/rules/${editingRule.id}` : '/admin/rewards/rules', {
+        method: editingRule?.id ? 'PATCH' : 'POST',
+        ...jsonBody(data),
+      });
+      setEditingRule(null);
+      onNotice('Reward rule saved successfully.');
+      await refresh();
+    } catch (cause) {
+      onError(cause.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reviewClaim = async (claimId, action, note) => {
+    try {
+      await api(`/admin/rewards/${claimId}/${action}`, { method: 'POST', ...jsonBody({ note }) });
+      setRejectingId('');
+      setRejectNote('');
+      onNotice(`Reward claim ${action === 'paid' ? 'marked paid' : `${action}d`} successfully.`);
+      await refresh();
+    } catch (cause) {
+      onError(cause.message);
+    }
+  };
+
+  const visibleClaims = status ? claims.filter((claim) => claim.status === status) : claims;
+  const formValues = editingRule ?? {
+    name: '',
+    ruleType: 'MILESTONE',
+    thresholdAmount: 5000,
+    rewardAmount: 500,
+    frequency: 'ONCE',
+    status: 'ACTIVE',
+  };
+
+  return (
+    <section className='surface table-surface'>
+      <div className='surface-heading'>
+        <div><p className='eyebrow'>REWARDS</p><h3>Claims and reward rules</h3></div>
+      </div>
+      <div className='surface form-surface form-stack'>
+        <h4>{editingRule ? 'Edit reward rule' : 'Add reward rule'}</h4>
+        <p className='form-subtitle'>Milestone eligibility uses the customer’s approved, credited deposits. Reward amounts and thresholds are enforced by the server.</p>
+        <form key={editingRule?.id ?? 'new-rule'} className='form-stack' onSubmit={saveRule}>
+          <div className='profile-form-grid'>
+            <label className='field'><span>Rule name</span><input name='name' defaultValue={formValues.name} maxLength='120' required /></label>
+            <label className='field'><span>Type</span><select name='ruleType' defaultValue={formValues.ruleType}><option value='MILESTONE'>Milestone</option><option value='DAILY'>Daily</option><option value='WEEKLY'>Weekly</option></select></label>
+          </div>
+          <div className='profile-form-grid'>
+            <label className='field'><span>Qualifying deposits (ETB)</span><input type='number' name='thresholdAmount' min='0' max='1000000000' step='0.01' defaultValue={formValues.thresholdAmount} required /></label>
+            <label className='field'><span>Reward amount (ETB)</span><input type='number' name='rewardAmount' min='0' max='1000000000' step='0.01' defaultValue={formValues.rewardAmount} required /></label>
+          </div>
+          <div className='profile-form-grid'>
+            <label className='field'><span>Frequency</span><select name='frequency' defaultValue={formValues.frequency}><option value='ONCE'>Once</option><option value='DAILY'>Daily</option><option value='WEEKLY'>Weekly</option></select></label>
+            <label className='field'><span>Status</span><select name='status' defaultValue={formValues.status}><option value='ACTIVE'>Active</option><option value='DISABLED'>Disabled</option></select></label>
+          </div>
+          <div className='button-row'>
+            <button className='primary-button' type='submit' disabled={saving}>{saving ? 'Saving…' : editingRule ? 'Update rule' : 'Add rule'}</button>
+            {editingRule && <button className='secondary-button' type='button' onClick={() => setEditingRule(null)}>Cancel</button>}
+          </div>
+        </form>
+        <div className='table-wrap'>
+          <table>
+            <thead><tr><th>Rule</th><th>Type</th><th>Threshold</th><th>Reward</th><th>Frequency</th><th>Status</th><th>Action</th></tr></thead>
+            <tbody>{rules.map((rule) => (
+              <tr key={rule.id}>
+                <td>{rule.name}</td><td>{rule.ruleType}</td><td>{money(rule.thresholdAmount)}</td><td>{money(rule.rewardAmount)}</td><td>{rule.frequency}</td><td><StatusBadge status={rule.status} /></td>
+                <td><button type='button' className='secondary-button' onClick={() => setEditingRule(rule)}>Edit</button></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </div>
+      <div className='surface-heading'>
+        <div><p className='eyebrow'>MANUAL REVIEW</p><h3>Reward claims</h3></div>
+        <label className='field'><span>Filter status</span><select value={status} onChange={(event) => setStatus(event.target.value)}><option value=''>All statuses</option>{['PENDING', 'APPROVED', 'REJECTED', 'PAID'].map((value) => <option key={value}>{value}</option>)}</select></label>
+      </div>
+      {visibleClaims.length ? (
+        <div className='table-wrap'>
+          <table>
+            <thead><tr><th>Customer</th><th>Phone</th><th>Reward</th><th>Threshold</th><th>Amount</th><th>Status</th><th>Requested</th><th>Review</th></tr></thead>
+            <tbody>{visibleClaims.map((claim) => (
+              <tr key={claim.id}>
+                <td>{claim.fullName}</td><td>{claim.phoneNumber}</td><td>{claim.name}</td><td>{money(claim.thresholdAmount)}</td><td>{money(claim.amount)}</td>
+                <td><StatusBadge status={claim.status} />{claim.adminNote && <small>{claim.adminNote}</small>}</td>
+                <td>{claim.requestedAt ? new Date(claim.requestedAt).toLocaleString() : new Date(claim.createdAt).toLocaleString()}</td>
+                <td>
+                  {claim.status === 'PENDING' && (rejectingId === claim.id ? (
+                    <div className='form-stack'>
+                      <input aria-label='Rejection reason' value={rejectNote} onChange={(event) => setRejectNote(event.target.value)} maxLength='500' placeholder='Reason for rejection' />
+                      <div className='button-row compact'>
+                        <button type='button' className='primary-button' disabled={!rejectNote.trim()} onClick={() => reviewClaim(claim.id, 'reject', rejectNote)}>Confirm rejection</button>
+                        <button type='button' className='secondary-button' onClick={() => setRejectingId('')}>Cancel</button>
+                      </div>
+                    </div>
+                  ) : <div className='button-row compact'>
+                    <button type='button' className='primary-button' onClick={() => reviewClaim(claim.id, 'approve')}>Approve</button>
+                    <button type='button' className='secondary-button' onClick={() => { setRejectingId(claim.id); setRejectNote(''); }}>Reject</button>
+                  </div>)}
+                  {claim.status === 'APPROVED' && <button type='button' className='primary-button' onClick={() => reviewClaim(claim.id, 'paid')}>Mark paid</button>}
+                </td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      ) : <Empty>No reward claims found.</Empty>}
+    </section>
+  );
+}
+
+function AdminReferralsPage({ onError }) {
+  const [result, setResult] = useState({ items: [], pagination: { page: 1, pages: 0, total: 0 } });
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [page, setPage] = useState(1);
+  const [expandedId, setExpandedId] = useState('');
+  const [members, setMembers] = useState({});
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      setLoading(true);
+      const params = new URLSearchParams({ page: String(page), limit: '25' });
+      if (search.trim()) params.set('search', search.trim());
+      if (status) params.set('status', status);
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      try {
+        const data = await api(`/admin/referrals?${params}`);
+        if (active) setResult(data);
+      } catch (cause) {
+        if (active) onError(cause.message);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    return () => { active = false; };
+  }, [search, status, from, to, page, onError]);
+
+  const toggleNetwork = async (userId) => {
+    if (expandedId === userId) {
+      setExpandedId('');
+      return;
+    }
+    setExpandedId(userId);
+    if (members[userId]) return;
+    const params = new URLSearchParams();
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    try {
+      const data = await api(`/admin/referrals/${userId}/members?${params}`);
+      setMembers((current) => ({ ...current, [userId]: data }));
+    } catch (cause) {
+      onError(cause.message);
+    }
+  };
+
+  return (
+    <section className='surface table-surface'>
+      <div className='surface-heading'><div><p className='eyebrow'>REFERRAL NETWORK</p><h3>Admin referrals</h3></div></div>
+      <div className='admin-table-filters'>
+        <label className='field'><span>Search referrer</span><input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder='Name, phone, or referral code' /></label>
+        <label className='field'><span>Account status</span><select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}><option value=''>All statuses</option><option value='ACTIVE'>Active</option><option value='SUSPENDED'>Suspended</option></select></label>
+        <label className='field'><span>From</span><input type='date' value={from} onChange={(event) => { setFrom(event.target.value); setPage(1); }} /></label>
+        <label className='field'><span>To</span><input type='date' value={to} onChange={(event) => { setTo(event.target.value); setPage(1); }} /></label>
+      </div>
+      {result.items?.length ? <div className='table-wrap'>
+        <table>
+          <thead><tr><th>Referrer</th><th>Referral code</th><th>Status</th><th>Network users</th><th>Active</th><th>Levels A / B / C</th><th>Qualifying recharge</th><th>Commission A / B / C</th><th>Total commission</th><th>Network</th></tr></thead>
+          <tbody>{result.items.map((item) => <Fragment key={item.id}>
+            <tr>
+              <td>{item.fullName}<small>{item.phoneNumber}</small></td><td>{item.referralCode}</td><td><StatusBadge status={item.status} /></td>
+              <td>{item.totalReferrals}</td><td>{item.activeReferrals}</td>
+              <td>{item.levelAReferrals} / {item.levelBReferrals} / {item.levelCReferrals}</td>
+              <td>{money(item.qualifyingRechargeTotal)}</td>
+              <td>{money(item.levelACommission)} / {money(item.levelBCommission)} / {money(item.levelCCommission)}</td>
+              <td>{money(item.commissionTotal)}</td><td><button type='button' className='secondary-button' onClick={() => toggleNetwork(item.id)}>{expandedId === item.id ? 'Hide' : 'View'} network</button></td>
+            </tr>
+            {expandedId === item.id && <tr><td colSpan='10'>{members[item.id] ? members[item.id].length ? <div className='table-wrap'>
+              <table><thead><tr><th>Level</th><th>Member</th><th>Sponsor</th><th>Status</th><th>Qualifying recharge</th><th>Approved transactions</th><th>Commission earned</th></tr></thead>
+                <tbody>{members[item.id].map((member) => <tr key={member.id}>
+                  <td>{member.level}</td><td>{member.fullName}<small>{member.phoneNumber}</small></td><td>{member.sponsorName}</td><td><StatusBadge status={member.status} /></td>
+                  <td>{money(member.qualifyingRechargeTotal)}</td>
+                  <td>{member.qualifyingRechargeCount ? <details><summary>{member.qualifyingRechargeCount} transaction(s)</summary><div className='form-stack'>{member.qualifyingRecharges.map((recharge) => <small key={recharge.id}>{money(recharge.amount)} · {recharge.transactionReference} · {new Date(recharge.creditedAt).toLocaleDateString()}</small>)}</div></details> : '—'}</td>
+                  <td>{money(member.commissionTotal)}</td>
+                </tr>)}</tbody>
+              </table>
+            </div> : <Empty>No network members match this date range.</Empty> : <p role='status'>Loading network…</p>}</td></tr>}
+          </Fragment>)}</tbody>
+        </table>
+      </div> : loading ? <p className='empty-state' role='status'>Loading referral networks…</p> : <Empty>No referral networks found.</Empty>}
+      <AdminTablePagination pagination={result.pagination} page={page} setPage={setPage} loading={loading} noun='referrers' />
+    </section>
+  );
+}
+
 function AdminTableFilters({ search, onSearch, status, onStatus, statuses, limit, onLimit, placeholder }) {
   return (
     <div className='admin-table-filters'>
@@ -1775,6 +2063,54 @@ function AdminAboutPage({ support, onSave }) {
           <label className='field'><span>Second section content</span><textarea name='aboutSecondContent' rows='5' defaultValue={support.aboutSecondContent ?? ''} maxLength='2000' required /></label>
         </div>
         <button className='primary-button' type='submit'>Save About page<span>↗</span></button>
+      </form>
+    </section>
+  );
+}
+
+function AdminWelcomePage({ support, onSave, onUploadImage, onError }) {
+  const [imageUrl, setImageUrl] = useState(support.welcomeImageUrl ?? '');
+  const [imageUploading, setImageUploading] = useState(false);
+  const handleImageUpload = async (file) => {
+    if (!file) return;
+    setImageUploading(true);
+    onError('');
+    try {
+      const uploaded = await onUploadImage(file);
+      setImageUrl(uploaded.imageUrl);
+    } catch (cause) {
+      onError(cause.message || 'Unable to upload welcome illustration.');
+    } finally {
+      setImageUploading(false);
+    }
+  };
+  return (
+    <section className='surface form-surface form-stack'>
+      <p className='eyebrow'>MEMBER EXPERIENCE</p>
+      <h3>Configure post-login welcome page</h3>
+      <p className='form-subtitle'>These changes appear after customer login and registration. The welcome bonus value remains connected to the existing registration bonus setting.</p>
+      <form className='form-stack' onSubmit={onSave}>
+        <div className='profile-form-grid'>
+          <label className='field'><span>Eyebrow</span><input name='welcomeEyebrow' defaultValue={support.welcomeEyebrow ?? ''} maxLength='120' required /></label>
+          <label className='field'><span>Page title</span><input name='welcomeTitle' defaultValue={support.welcomeTitle ?? ''} maxLength='160' required /></label>
+        </div>
+        <label className='field'><span>Introduction</span><textarea name='welcomeIntro' rows='3' defaultValue={support.welcomeIntro ?? ''} maxLength='1000' required /></label>
+        <div className='profile-form-grid'>
+          <label className='field'><span>Welcome bonus label</span><input name='welcomeBonusLabel' defaultValue={support.welcomeBonusLabel ?? ''} maxLength='80' required /></label>
+          <label className='field'><span>Home button label</span><input name='welcomeHomeButtonLabel' defaultValue={support.welcomeHomeButtonLabel ?? ''} maxLength='80' required /></label>
+        </div>
+        <label className='field'><span>Example section title</span><input name='welcomeExampleTitle' defaultValue={support.welcomeExampleTitle ?? ''} maxLength='120' required /></label>
+        <div className='profile-form-grid'>
+          <label className='field'><span>Example product price (ETB)</span><input type='number' name='welcomeExamplePrice' min='0' max='100000000' step='0.01' defaultValue={support.welcomeExamplePrice ?? 300} required /></label>
+          <label className='field'><span>Example daily earnings (ETB)</span><input type='number' name='welcomeExampleDailyEarnings' min='0' max='100000000' step='0.01' defaultValue={support.welcomeExampleDailyEarnings ?? 72} required /></label>
+        </div>
+        <label className='field'><span>Example disclaimer</span><textarea name='welcomeDisclaimer' rows='3' defaultValue={support.welcomeDisclaimer ?? ''} maxLength='1000' required /></label>
+        <label className='field'><span>Illustration image URL (optional)</span><input type='url' name='welcomeImageUrl' value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} maxLength='500' placeholder='https://example.com/welcome-image.jpg' />
+          <span className='image-upload-control'><input type='file' accept='image/jpeg,image/png,image/webp' disabled={imageUploading} onChange={(event) => { handleImageUpload(event.target.files?.[0]); event.target.value = ''; }} /><small>{imageUploading ? 'Uploading image…' : 'Or choose a JPG, PNG, or WEBP image (up to 5 MB). Save the page to apply it.'}</small></span>
+          {imageUrl && <img className='admin-product-image-preview' src={assetUrl(imageUrl)} alt={support.welcomeImageAlt || 'Welcome page illustration preview'} />}
+        </label>
+        <label className='field'><span>Illustration image description</span><input name='welcomeImageAlt' defaultValue={support.welcomeImageAlt ?? ''} maxLength='200' required /></label>
+        <button className='primary-button' type='submit' disabled={imageUploading}>{imageUploading ? 'Uploading image…' : 'Save welcome page'}<span>↗</span></button>
       </form>
     </section>
   );
@@ -1943,7 +2279,7 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
 
   const renderPage = () => {
     if (currentPath === '/welcome') {
-      return <WelcomePromotionPage registrationBonus={settings?.registrationBonus ?? 70} />;
+      return <WelcomePromotionPage registrationBonus={settings?.registrationBonus ?? 70} support={support} />;
     }
     if (currentPath.startsWith('/products/')) {
       const productId = currentPath.split('/').filter(Boolean).at(-1);
@@ -1993,7 +2329,7 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
           setNotice('Referral link is ready to share.');
         }} />;
       case '/rewards':
-        return <RewardsPage />;
+        return <RewardsPage onCustomerSuccess={onCustomerSuccess} />;
       case '/transactions':
         return <TransactionsPage />;
       case '/notifications':
@@ -2218,31 +2554,31 @@ function AuthScreen({ auth, setAuth, mode, onSubmit, onSwitchMode, busy, error }
   );
 }
 
-function WelcomePromotionPage({ registrationBonus }) {
+function WelcomePromotionPage({ registrationBonus, support }) {
   const navigate = useNavigate();
   return (
     <section className='welcome-promotion'>
       <div className='welcome-promotion-art'>
-        <img src={welcomePromotionImage} alt='MKM welcome illustration with a rising plant and gift box' />
+        <img src={assetUrl(support?.welcomeImageUrl) || welcomePromotionImage} alt={support?.welcomeImageAlt || 'MKM welcome illustration with a rising plant and gift box'} />
       </div>
       <div className='welcome-promotion-copy'>
-        <p className='eyebrow'>YOUR MEMBER JOURNEY STARTS HERE</p>
-        <h2>Welcome to MKM</h2>
-        <p className='welcome-promotion-intro'>We’re glad you’re here. Explore your account, products, and member benefits from one place.</p>
+        <p className='eyebrow'>{support?.welcomeEyebrow || 'YOUR MEMBER JOURNEY STARTS HERE'}</p>
+        <h2>{support?.welcomeTitle || 'Welcome to MKM'}</h2>
+        <p className='welcome-promotion-intro'>{support?.welcomeIntro || 'We’re glad you’re here. Explore your account, products, and member benefits from one place.'}</p>
         <div className='welcome-promotion-bonus'>
-          <span>Welcome bonus</span>
+          <span>{support?.welcomeBonusLabel || 'Welcome bonus'}</span>
           <strong>{money(registrationBonus)}</strong>
         </div>
         <div className='welcome-promotion-example'>
-          <p className='eyebrow'>PRODUCT EXAMPLE</p>
+          <p className='eyebrow'>{support?.welcomeExampleTitle || 'PRODUCT EXAMPLE'}</p>
           <div className='welcome-example-values'>
-            <div><span>Example product price</span><strong>{money(300)}</strong></div>
-            <div><span>Example daily earnings</span><strong>{money(72)}</strong></div>
+            <div><span>Example product price</span><strong>{money(support?.welcomeExamplePrice ?? 300)}</strong></div>
+            <div><span>Example daily earnings</span><strong>{money(support?.welcomeExampleDailyEarnings ?? 72)}</strong></div>
           </div>
-          <small>Illustrative example only. Actual product terms and earnings depend on the product details shown before purchase.</small>
+          <small>{support?.welcomeDisclaimer || 'Illustrative example only. Actual product terms and earnings depend on the product details shown before purchase.'}</small>
         </div>
         <button className='primary-button welcome-home-button' type='button' onClick={() => navigate('/dashboard')}>
-          Go to Home <span>↗</span>
+          {support?.welcomeHomeButtonLabel || 'Go to Home'} <span>↗</span>
         </button>
       </div>
     </section>
@@ -3568,32 +3904,86 @@ function TasksPage() {
   );
 }
 
-function RewardsPage() {
+function RewardsPage({ onCustomerSuccess }) {
   const [rewards, setRewards] = useState({ items: [], summary: {} });
-  useEffect(() => { api('/rewards').then(setRewards).catch(() => setRewards({ items: [], summary: {} })); }, []);
+  const [error, setError] = useState('');
+  const [busyId, setBusyId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const refresh = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      setRewards(await api('/rewards'));
+    } catch (cause) {
+      setError(cause.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { refresh(); }, []);
+  const claim = async (reward) => {
+    setBusyId(reward.id);
+    setError('');
+    try {
+      await api(`/rewards/${reward.id}/claim`, { method: 'POST', ...jsonBody({}) });
+      await refresh();
+      onCustomerSuccess?.('Reward claim submitted. It is waiting for admin approval.');
+    } catch (cause) {
+      setError(cause.message);
+    } finally {
+      setBusyId('');
+    }
+  };
 
   return (
-    <section className='surface table-surface'>
+    <section className='surface customer-rewards'>
       <div className='surface-heading'>
         <div>
           <p className='eyebrow'>REWARDS</p>
-          <h3>Reward claims</h3>
+          <h3>Deposit milestone rewards</h3>
         </div>
       </div>
-      {rewards.items?.length ? (
-        <div className='table-wrap'>
-          <table>
-            <thead>
-              <tr><th>Name</th><th>Rule type</th><th>Reward amount</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-              {rewards.items.map((item) => (
-                <tr key={item.id}><td>{item.name}</td><td>{item.ruleType}</td><td>{money(item.rewardAmount)}</td><td>{item.status}</td></tr>
-              ))}
-            </tbody>
-          </table>
+      <p className='customer-rewards-intro'>Only approved deposits count toward your milestones. Submitted claims remain pending until an administrator reviews them.</p>
+      {error && <div className='alert alert-error' role='alert'>{error}</div>}
+      <div className='metric-grid customer-reward-summary'>
+        <Metric label='Approved qualifying deposits' value={money(rewards.items?.[0]?.qualifyingDeposits ?? 0)} />
+        <Metric label='Available to claim' value={money(rewards.summary?.totalClaimable ?? 0)} />
+        <Metric label='Waiting for approval' value={money(rewards.summary?.totalPending ?? 0)} />
+        <Metric label='Paid / approved' value={money(rewards.summary?.totalCompleted ?? 0)} />
+      </div>
+      {loading ? <p className='empty-state' role='status'>Loading reward milestones…</p> : rewards.items?.length ? (
+        <div className='customer-reward-grid'>
+          {rewards.items.map((item) => {
+            const progress = item.ruleType === 'MILESTONE' && Number(item.thresholdAmount) > 0
+              ? Math.min(100, (Number(item.qualifyingDeposits) / Number(item.thresholdAmount)) * 100)
+              : 0;
+            return (
+              <article className='customer-reward-card' key={item.id}>
+                <div className='customer-reward-card-heading'>
+                  <div><p className='eyebrow'>{item.ruleType === 'MILESTONE' ? 'DEPOSIT MILESTONE' : item.ruleType}</p><h4>{item.name}</h4></div>
+                  <span className='customer-reward-amount'>{money(item.rewardAmount)}</span>
+                </div>
+                {item.ruleType === 'MILESTONE' ? (
+                  <div className='customer-reward-progress'>
+                    <div className='customer-reward-progress-label'><span>Approved deposits</span><strong>{money(item.qualifyingDeposits)} <small>of {money(item.thresholdAmount)}</small></strong></div>
+                    <div className='customer-reward-progress-track' role='progressbar' aria-label={`${item.name} deposit progress`} aria-valuemin='0' aria-valuemax='100' aria-valuenow={Math.round(progress)}><span style={{ width: `${progress}%` }} /></div>
+                  </div>
+                ) : <p className='customer-reward-unavailable'>This reward type is not currently available to claim.</p>}
+                <div className='customer-reward-footer'>
+                  <StatusBadge status={item.status} />
+                  {item.status === 'CLAIMABLE'
+                    ? <button type='button' className='primary-button' disabled={Boolean(busyId)} onClick={() => claim(item)}>{busyId === item.id ? 'Submitting…' : 'Claim reward'}<span>↗</span></button>
+                    : <span className='customer-reward-status-copy'>{item.status === 'PENDING' ? 'Waiting for admin approval'
+                      : item.status === 'APPROVED' ? 'Approved — awaiting payment'
+                        : item.status === 'PAID' ? 'Paid to wallet'
+                          : item.status === 'REJECTED' ? 'Claim rejected'
+                            : item.ruleType === 'MILESTONE' ? 'Deposit threshold not reached' : 'Not available for claim'}</span>}
+                </div>
+              </article>
+            );
+          })}
         </div>
-      ) : <Empty>No rewards are available yet.</Empty>}
+      ) : <Empty>No reward milestones are configured yet.</Empty>}
     </section>
   );
 }

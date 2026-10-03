@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildDailyTaskForecast, buildDefaultRewardRules } from '../src/lib/rewardEngine.js';
-import { summarizeRewardData, summarizeTaskData } from '../src/lib/rewardMetrics.js';
+import { getMilestoneRewardStatus, summarizeRewardData, summarizeTaskData } from '../src/lib/rewardMetrics.js';
 
 test('reward summaries aggregate claimable totals and statuses', () => {
   const summary = summarizeRewardData([
@@ -50,4 +50,17 @@ test('default reward rules include the project core reward types', () => {
   assert.ok(rules.some((rule) => rule.ruleType === 'DAILY'));
   assert.ok(rules.some((rule) => rule.ruleType === 'MILESTONE'));
   assert.ok(rules.some((rule) => rule.ruleType === 'WEEKLY'));
+  assert.deepEqual(
+    rules.filter((rule) => rule.ruleType === 'MILESTONE').map(({ thresholdAmount, rewardAmount }) => [thresholdAmount, rewardAmount]),
+    [[5000, 500], [8000, 800], [20000, 2000], [50000, 8000]],
+  );
+});
+
+test('milestone eligibility uses approved deposit totals and preserves claim status', () => {
+  const rule = { ruleStatus: 'ACTIVE', ruleType: 'MILESTONE', thresholdAmount: '5000.00' };
+  assert.equal(getMilestoneRewardStatus({ ...rule, qualifyingDeposits: '4999.99' }), 'NOT_ELIGIBLE');
+  assert.equal(getMilestoneRewardStatus({ ...rule, qualifyingDeposits: '5000.00' }), 'CLAIMABLE');
+  assert.equal(getMilestoneRewardStatus({ ...rule, qualifyingDeposits: '9000', claimStatus: 'PENDING' }), 'PENDING');
+  assert.equal(getMilestoneRewardStatus({ ...rule, ruleStatus: 'DISABLED', qualifyingDeposits: '9000' }), 'NOT_ELIGIBLE');
+  assert.equal(getMilestoneRewardStatus({ ...rule, ruleType: 'DAILY', qualifyingDeposits: '9000' }), 'NOT_ELIGIBLE');
 });

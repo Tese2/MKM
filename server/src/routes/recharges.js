@@ -10,19 +10,21 @@ import { runIdempotent } from '../db/idempotency.js';
 import { inTransaction, pool } from '../db/pool.js';
 import { buildReferralCommissions, fetchSponsorLevels } from '../lib/referralEngine.js';
 import { requireAdmin, requireAuth } from '../middleware/auth.js';
+import { createUserRateLimit } from '../middleware/userRateLimit.js';
 import { postWalletMovement } from '../services/wallet.js';
 export const rechargesRouter = Router();
 rechargesRouter.use(requireAuth);
 export const adminRechargesRouter = Router();
 adminRechargesRouter.use(requireAuth, requireAdmin);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024, files: 1 } });
+const customerRechargeLimiter = createUserRateLimit({ limit: 20 });
 const privateDirectory = resolve(process.env.PRIVATE_UPLOAD_DIR ?? 'server/private-uploads');
 const isWithinPrivateDirectory = (target) => {
     const normalizedTarget = resolve(target);
     return normalizedTarget === privateDirectory || normalizedTarget.startsWith(`${privateDirectory}${sep}`);
 };
 const amountSchema = z.string().regex(/^(?:0|[1-9]\d{0,17})(?:\.\d{1,2})?$/, 'Enter a valid amount with up to two decimal places.');
-rechargesRouter.post('/', upload.single('proof'), async (request, response, next) => {
+rechargesRouter.post('/', customerRechargeLimiter, upload.single('proof'), async (request, response, next) => {
     let storedPath;
     try {
         const parsed = z.object({
@@ -102,7 +104,7 @@ rechargesRouter.get('/', async (request, response, next) => {
         next(error);
     }
 });
-rechargesRouter.post('/:id/proof', upload.single('proof'), async (request, response, next) => {
+rechargesRouter.post('/:id/proof', customerRechargeLimiter, upload.single('proof'), async (request, response, next) => {
     let storedPath;
     try {
         if (!request.file)

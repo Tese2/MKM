@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { runIdempotent } from '../db/idempotency.js';
 import { inTransaction, pool } from '../db/pool.js';
 import { requireAdmin, requireAuth } from '../middleware/auth.js';
+import { createUserRateLimit } from '../middleware/userRateLimit.js';
 import { adjustLockedBalance, postWalletMovement } from '../services/wallet.js';
 import { validateAccountNumber } from '../lib/bankValidation.js';
 export const withdrawalsRouter = Router();
@@ -22,7 +23,8 @@ withdrawalsRouter.get('/config', async (_request, response, next) => {
 export const adminWithdrawalsRouter = Router();
 adminWithdrawalsRouter.use(requireAuth, requireAdmin);
 const amountSchema = z.string().regex(/^(?:0|[1-9]\d{0,17})(?:\.\d{1,2})?$/, 'Enter a valid amount with up to two decimal places.');
-withdrawalsRouter.post('/', async (request, response, next) => {
+const customerWithdrawalLimiter = createUserRateLimit({ limit: 20 });
+withdrawalsRouter.post('/', customerWithdrawalLimiter, async (request, response, next) => {
     try {
         const parsed = z.object({ withdrawalAccountId: z.string().uuid(), amount: amountSchema, withdrawalPassword: z.string().min(1).max(128) }).safeParse(request.body);
         if (!parsed.success)

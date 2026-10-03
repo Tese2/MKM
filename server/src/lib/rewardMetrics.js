@@ -7,6 +7,12 @@ function formatMoney(value) {
   return Number(value ?? 0).toFixed(2);
 }
 
+export function getMilestoneRewardStatus({ ruleStatus, ruleType, claimStatus, qualifyingDeposits, thresholdAmount }) {
+  if (claimStatus) return String(claimStatus).toUpperCase();
+  if (ruleStatus !== 'ACTIVE' || ruleType !== 'MILESTONE') return 'NOT_ELIGIBLE';
+  return toNumber(qualifyingDeposits) >= toNumber(thresholdAmount) ? 'CLAIMABLE' : 'NOT_ELIGIBLE';
+}
+
 export function summarizeRewardData(rows = []) {
   const normalized = rows.map((row) => ({
     ...row,

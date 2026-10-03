@@ -35,7 +35,6 @@ withdrawalAccountsRouter.get('/', async (request, response, next) => {
        WHERE a.user_id = $1 ORDER BY a.is_default DESC, a.created_at DESC`, [request.auth.userId]);
         response.json({ success: true, data: result.rows.map((account) => ({
             ...account,
-            accountNumber: maskAccount(account.accountNumber),
             phoneNumber: account.phoneNumber ? maskAccount(account.phoneNumber) : null,
         })) });
     }
@@ -72,7 +71,6 @@ withdrawalAccountsRouter.post('/', async (request, response, next) => {
         });
         response.status(201).json({ success: true, data: {
             ...account,
-            accountNumber: maskAccount(account.accountNumber),
             phoneNumber: account.phoneNumber ? maskAccount(account.phoneNumber) : null,
         } });
     }

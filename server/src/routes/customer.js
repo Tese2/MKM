@@ -74,7 +74,11 @@ customerRouter.get('/config/public', async (_request, response, next) => {
             'whatsapp_url', 'whatsapp_number', 'whatsapp_enabled', 'whatsapp_message',
             'official_group_name', 'official_group_url', 'official_group_label', 'official_group_enabled',
             'app_download_url', 'about_title', 'about_intro', 'about_first_heading',
-            'about_first_content', 'about_second_heading', 'about_second_content', 'public_links',
+            'about_first_content', 'about_second_heading', 'about_second_content',
+            'welcome_eyebrow', 'welcome_title', 'welcome_intro', 'welcome_bonus_label',
+            'welcome_example_title', 'welcome_example_price', 'welcome_example_daily_earnings',
+            'welcome_disclaimer', 'welcome_image_url', 'welcome_image_alt',
+            'welcome_home_button_label', 'public_links',
         ];
         const result = await pool.query("SELECT key, value #>> '{}' AS value FROM settings WHERE key = ANY($1::text[])", [keys]);
         const settings = Object.fromEntries(result.rows.map(({ key, value }) => [key, value]));

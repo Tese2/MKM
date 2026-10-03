@@ -103,15 +103,30 @@ authRouter.post('/login', authLimiter, async (request, response, next) => {
 });
 authRouter.post('/logout', async (request, response) => {
     const token = request.signedCookies?.mkm_session ?? request.cookies?.mkm_session;
-    if (token) {
+    let claims = null;
+    if (typeof token === 'string') {
         try {
-            const claims = jwt.verify(token, process.env.JWT_SECRET, { issuer: 'mkm-api', audience: 'mkm-client' });
-            if (typeof claims.sid === 'string')
-                await pool.query('UPDATE auth_sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL', [claims.sid]);
+            claims = jwt.verify(token, process.env.JWT_SECRET, { issuer: 'mkm-api', audience: 'mkm-client' });
+        } catch {
+            claims = null;
         }
-        catch { /* Clear invalid or expired cookies as well. */ }
     }
-    response.clearCookie('mkm_session', cookieOptions());
+    if (typeof claims?.sid === 'string' && typeof claims.sub === 'string') {
+        try {
+            await pool.query(
+                'UPDATE auth_sessions SET revoked_at = now() WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL',
+                [claims.sid, claims.sub],
+            );
+        } catch {
+            console.error('Logout failed while revoking the active session.');
+            return response.status(500).json({
+                success: false,
+                message: 'Could not complete logout. Please try again.',
+                code: 'LOGOUT_FAILED',
+            });
+        }
+    }
+    response.clearCookie('mkm_session', clearCookieOptions());
     response.json({ success: true, data: { loggedOut: true } });
 });
 authRouter.get('/me', requireAuth, async (request, response, next) => {
@@ -136,6 +151,11 @@ function sanitizeUser(user) {
 }
 function cookieOptions() {
     return { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', signed: true, path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 };
+}
+function clearCookieOptions() {
+    const options = cookieOptions();
+    delete options.maxAge;
+    return options;
 }
 function setSessionCookie(response, userId, sessionId) {
     response.cookie('mkm_session', sessionToken(userId, sessionId), cookieOptions());

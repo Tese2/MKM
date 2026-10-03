@@ -65,3 +65,41 @@ test('support settings provide editable About page copy with safe defaults', () 
   assert.equal(configured.aboutSecondHeading, 'Our values');
   assert.equal(configured.aboutSecondContent, 'Trust and service.');
 });
+
+test('support settings provide configurable welcome page content with safe defaults', () => {
+  const defaults = normalizeSupportSettings({});
+  assert.equal(defaults.welcomeEyebrow, 'YOUR MEMBER JOURNEY STARTS HERE');
+  assert.equal(defaults.welcomeTitle, 'Welcome to MKM');
+  assert.equal(defaults.welcomeExamplePrice, 300);
+  assert.equal(defaults.welcomeExampleDailyEarnings, 72);
+  assert.equal(defaults.welcomeImageUrl, null);
+
+  const configured = normalizeSupportSettings({
+    welcome_eyebrow: 'START HERE',
+    welcome_title: 'Welcome, member',
+    welcome_intro: 'Your account is ready.',
+    welcome_bonus_label: 'Account bonus',
+    welcome_example_title: 'SAMPLE',
+    welcome_example_price: '450',
+    welcome_example_daily_earnings: '18.5',
+    welcome_disclaimer: 'Example terms apply.',
+    welcome_image_url: 'https://example.com/welcome.png',
+    welcome_image_alt: 'MKM welcome art',
+    welcome_home_button_label: 'Open dashboard',
+  });
+  assert.equal(configured.welcomeEyebrow, 'START HERE');
+  assert.equal(configured.welcomeTitle, 'Welcome, member');
+  assert.equal(configured.welcomeIntro, 'Your account is ready.');
+  assert.equal(configured.welcomeBonusLabel, 'Account bonus');
+  assert.equal(configured.welcomeExampleTitle, 'SAMPLE');
+  assert.equal(configured.welcomeExamplePrice, 450);
+  assert.equal(configured.welcomeExampleDailyEarnings, 18.5);
+  assert.equal(configured.welcomeDisclaimer, 'Example terms apply.');
+  assert.equal(configured.welcomeImageUrl, 'https://example.com/welcome.png');
+  assert.equal(configured.welcomeImageAlt, 'MKM welcome art');
+  assert.equal(configured.welcomeHomeButtonLabel, 'Open dashboard');
+
+  const invalid = normalizeSupportSettings({ welcome_example_price: '-1', welcome_image_url: 'javascript:alert(1)' });
+  assert.equal(invalid.welcomeExamplePrice, 300);
+  assert.equal(invalid.welcomeImageUrl, null);
+});

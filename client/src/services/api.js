@@ -1,5 +1,9 @@
 const API_BASE = import.meta.env.VITE_API_URL ?? '';
 
+export function assetUrl(path) {
+  return path?.startsWith('/') && API_BASE ? `${API_BASE}${path}` : path;
+}
+
 export async function api(path, options = {}) {
   const { idempotencyKey, ...requestOptions } = options;
   const response = await fetch(`${API_BASE}/api${path}`, {

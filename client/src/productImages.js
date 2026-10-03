@@ -1,3 +1,5 @@
+import { assetUrl } from './services/api.js';
+
 const defaultProductImages = [
   'https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?auto=format&fit=crop&w=900&q=80',
   'https://images.unsplash.com/photo-1559526324-593bc073d938?auto=format&fit=crop&w=900&q=80',
@@ -10,7 +12,7 @@ const defaultProductImages = [
 ];
 
 export function getProductImage(product) {
-  if (product?.imageUrl) return product.imageUrl;
+  if (product?.imageUrl) return assetUrl(product.imageUrl);
   const order = Number(product?.displayOrder ?? 1);
   const index = Number.isFinite(order) && order > 0 ? Math.floor(order - 1) : 0;
   return defaultProductImages[index % defaultProductImages.length];

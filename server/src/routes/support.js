@@ -31,6 +31,17 @@ const SUPPORT_KEYS = [
   'about_first_content',
   'about_second_heading',
   'about_second_content',
+  'welcome_eyebrow',
+  'welcome_title',
+  'welcome_intro',
+  'welcome_bonus_label',
+  'welcome_example_title',
+  'welcome_example_price',
+  'welcome_example_daily_earnings',
+  'welcome_disclaimer',
+  'welcome_image_url',
+  'welcome_image_alt',
+  'welcome_home_button_label',
   'public_links',
 ];
 
@@ -109,6 +120,76 @@ adminSupportRouter.put('/about', async (request, response, next) => {
       await client.query(
         'INSERT INTO audit_logs(admin_id, action, entity_type, old_value, new_value) VALUES ($1, $2, $3, $4, $5)',
         [request.auth.userId, 'PUBLIC_ABOUT_PAGE_UPDATE', 'public_page', null, parsed.data],
+      );
+      await client.query('COMMIT');
+      response.json({ success: true, data: { updated: updates.length } });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
+const welcomePageSchema = z.object({
+  welcomeEyebrow: z.string().trim().min(1).max(120),
+  welcomeTitle: z.string().trim().min(1).max(160),
+  welcomeIntro: z.string().trim().min(1).max(1000),
+  welcomeBonusLabel: z.string().trim().min(1).max(80),
+  welcomeExampleTitle: z.string().trim().min(1).max(120),
+  welcomeExamplePrice: z.coerce.number().min(0).max(100000000),
+  welcomeExampleDailyEarnings: z.coerce.number().min(0).max(100000000),
+  welcomeDisclaimer: z.string().trim().min(1).max(1000),
+  welcomeImageUrl: z.string().trim().max(500).optional().default(''),
+  welcomeImageAlt: z.string().trim().min(1).max(200),
+  welcomeHomeButtonLabel: z.string().trim().min(1).max(80),
+}).superRefine((value, context) => {
+  if (value.welcomeImageUrl && !normalizeSupportSettings({ welcome_image_url: value.welcomeImageUrl }).welcomeImageUrl) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['welcomeImageUrl'], message: 'Enter a valid HTTP or HTTPS image URL.' });
+  }
+});
+
+adminSupportRouter.put('/welcome', async (request, response, next) => {
+  try {
+    const parsed = welcomePageSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return response.status(400).json({
+        success: false,
+        message: parsed.error.issues[0]?.message ?? 'Check the welcome page content.',
+        code: 'VALIDATION_ERROR',
+      });
+    }
+    const incoming = parsed.data;
+    const updates = [
+      ['welcome_eyebrow', incoming.welcomeEyebrow],
+      ['welcome_title', incoming.welcomeTitle],
+      ['welcome_intro', incoming.welcomeIntro],
+      ['welcome_bonus_label', incoming.welcomeBonusLabel],
+      ['welcome_example_title', incoming.welcomeExampleTitle],
+      ['welcome_example_price', incoming.welcomeExamplePrice],
+      ['welcome_example_daily_earnings', incoming.welcomeExampleDailyEarnings],
+      ['welcome_disclaimer', incoming.welcomeDisclaimer],
+      ['welcome_image_url', incoming.welcomeImageUrl || null],
+      ['welcome_image_alt', incoming.welcomeImageAlt],
+      ['welcome_home_button_label', incoming.welcomeHomeButtonLabel],
+    ];
+    const client = await getPool().connect();
+    try {
+      await client.query('BEGIN');
+      for (const [key, value] of updates) {
+        await client.query(
+          `INSERT INTO settings(key, value, updated_by, updated_at)
+           VALUES ($1, $2::jsonb, $3, now())
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+          [key, JSON.stringify(value), request.auth.userId],
+        );
+      }
+      await client.query(
+        'INSERT INTO audit_logs(admin_id, action, entity_type, old_value, new_value) VALUES ($1, $2, $3, $4, $5)',
+        [request.auth.userId, 'WELCOME_PAGE_UPDATE', 'public_page', null, incoming],
       );
       await client.query('COMMIT');
       response.json({ success: true, data: { updated: updates.length } });
