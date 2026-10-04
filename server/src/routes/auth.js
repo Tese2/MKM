@@ -166,7 +166,7 @@ function sanitizeUser(user) {
     };
 }
 function cookieOptions() {
-    return { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', signed: true, path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 };
+    return { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'none', signed: true, path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 };
 }
 function clearCookieOptions() {
     const options = cookieOptions();
