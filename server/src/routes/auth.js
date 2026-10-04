@@ -20,7 +20,7 @@ export function normalizeReferralCode(value) {
     return normalized;
 }
 const registrationSchema = z.object({
-    fullName: z.fstring().trim().min(2).max(120),
+    fullName: z.string().trim().min(2).max(120),
     phoneNumber: phoneSchema,
     password: z.string().min(6).max(128),
     confirmPassword: z.string().min(6).max(128),
