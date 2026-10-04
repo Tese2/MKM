@@ -20,7 +20,7 @@ export function normalizeReferralCode(value) {
     return normalized;
 }
 const registrationSchema = z.object({
-    fullName: z.string().trim().min(2).max(120),
+    fullName: z.fstring().trim().min(2).max(120),
     phoneNumber: phoneSchema,
     password: z.string().min(6).max(128),
     confirmPassword: z.string().min(6).max(128),
@@ -53,8 +53,24 @@ authRouter.post('/register', authLimiter, async (request, response, next) => {
                 if (!exists.rowCount)
                     break;
             }
-                const userResult = await client.query(`INSERT INTO users(full_name, phone_number, password_hash, referral_code)
-            VALUES ($1, $2, $3, $4) RETURNING id, full_name, phone_number, referral_code, role, status`, [input.fullName, input.phoneNumber, loginHash, nextReferralCode]);
+             let userResult;
+
+try {
+    userResult = await client.query(
+        `INSERT INTO users(full_name, phone_number, password_hash, referral_code)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, full_name, phone_number, referral_code, role, status`,
+        [input.fullName, input.phoneNumber, loginHash, nextReferralCode],
+    );
+} catch (error) {
+    if (error?.code === '23505') {
+        throw Object.assign(
+            new Error('This phone number is already registered.'),
+            { status: 409, code: 'PHONE_ALREADY_REGISTERED' },
+        );
+    }
+    throw error;
+}
             const user = userResult.rows[0];
             await client.query('INSERT INTO wallets(user_id) VALUES ($1)', [user.id]);
             if (sponsorId)
