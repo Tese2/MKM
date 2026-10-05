@@ -6,8 +6,9 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "node --env-file=../.env --watch src/server.js",
-    "start": "node --env-file=../.env src/server.js",
-    "test": "node --test"
+    "start": "node src/server.js",
+    "db:migrate": "node src/db/migrate.js",
+   "test": "node --test"
   },
   "dependencies": {
     "argon2": "^0.41.1",

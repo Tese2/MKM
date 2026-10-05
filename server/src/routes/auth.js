@@ -63,8 +63,24 @@ authRouter.post('/register', authLimiter, async (request, response, next) => {
                 if (!exists.rowCount)
                     break;
             }
-                const userResult = await client.query(`INSERT INTO users(full_name, phone_number, password_hash, referral_code)
-            VALUES ($1, $2, $3, $4) RETURNING id, full_name, phone_number, referral_code, role, status`, [input.fullName, input.phoneNumber, loginHash, nextReferralCode]);
+             let userResult;
+
+try {
+    userResult = await client.query(
+        `INSERT INTO users(full_name, phone_number, password_hash, referral_code)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, full_name, phone_number, referral_code, role, status`,
+        [input.fullName, input.phoneNumber, loginHash, nextReferralCode],
+    );
+} catch (error) {
+    if (error?.code === '23505') {
+        throw Object.assign(
+            new Error('This phone number is already registered.'),
+            { status: 409, code: 'PHONE_ALREADY_REGISTERED' },
+        );
+    }
+    throw error;
+}
             const user = userResult.rows[0];
             await client.query('INSERT INTO wallets(user_id) VALUES ($1)', [user.id]);
             if (sponsorId)
@@ -177,7 +193,7 @@ function sanitizeUser(user) {
     };
 }
 function cookieOptions() {
-    return { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', signed: true, path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 };
+    return { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'none', signed: true, path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 };
 }
 function clearCookieOptions() {
     const options = cookieOptions();

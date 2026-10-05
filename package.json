@@ -11,7 +11,7 @@
     "start": "node server/src/server.js",
     "test": "npm --prefix server test",
     "db:check": "node --env-file=.env -e \"import pg from 'pg'; const { Pool } = pg; const url = process.env.DATABASE_URL || ''; const shouldUseSsl = /neon\\.tech|sslmode=require/i.test(url) || !url.includes('localhost'); const pool = new Pool({ connectionString: url, ssl: shouldUseSsl ? { rejectUnauthorized: false } : undefined }); pool.query('SELECT 1 AS ok').then(({ rows }) => { console.log('DB_OK', rows[0].ok); }).catch((error) => { console.error('DB_CHECK_FAILED'); console.error(error.message); process.exit(1); }).finally(() => pool.end());\"",
-    "db:migrate": "node --env-file=.env server/src/db/migrate.js",
+    "db:migrate": "node server/src/db/migrate.js",
     "db:seed": "node --env-file=.env server/src/db/seed.js",
     "health": "curl -fsS http://localhost:4000/api/health"
   },
