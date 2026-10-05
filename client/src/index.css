@@ -1120,3 +1120,45 @@ td small { margin-top: 3px; color: #8b978f; font-size: 10px; }
 .image-upload-control input[type='file']::file-selector-button { min-height: 34px; margin-right: 10px; padding: 0 12px; border: 1px solid #d5dfd6; border-radius: 4px; color: #385b43; background: #f8fbf8; font: inherit; font-weight: 600; cursor: pointer; }
 .image-upload-control input[type='file']::file-selector-button:hover { border-color: #97b29b; background: #eef5ef; }
 .admin-product-image-preview { display: block; width: min(100%, 360px); max-height: 220px; object-fit: cover; border: 1px solid var(--line); border-radius: 6px; }
+
+/* Enhanced Customer Dashboard Styling */
+.dashboard-action-card {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid rgba(23, 61, 49, 0.12);
+  background: linear-gradient(180deg, #ffffff 0%, #f9fbf9 100%);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.dashboard-action-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(23, 61, 49, 0.35);
+  box-shadow: 0 6px 16px rgba(23, 61, 49, 0.08);
+  background: #ffffff;
+}
+
+.metric-grid .metric {
+  transition: all 0.2s ease;
+  background: linear-gradient(135deg, #ffffff 0%, #f7faf7 100%);
+  border: 1px solid rgba(23, 61, 49, 0.1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.metric-grid .metric:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(23, 61, 49, 0.06);
+}
+
+.auth-download-box {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+.auth-download-box a:hover {
+  opacity: 0.92;
+  transform: scale(1.02);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+

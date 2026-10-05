@@ -493,8 +493,8 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path='/' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <PublicWebsite user={null} onPurchase={purchase} busy={busy} />} />
-      <Route path='/login' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <AuthScreen auth={auth} setAuth={setAuth} mode='login' onSubmit={submitAuth} onSwitchMode={() => navigate(`/register${location.search}`)} busy={busy} error={error} onDismissError={() => setError('')} />} />
-      <Route path='/register' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <AuthScreen auth={auth} setAuth={setAuth} mode='register' onSubmit={submitAuth} onSwitchMode={() => navigate('/login')} busy={busy} error={error} onDismissError={() => setError('')} />} />
+      <Route path='/login' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <AuthScreen auth={auth} setAuth={setAuth} mode='login' onSubmit={submitAuth} onSwitchMode={() => navigate(`/register${location.search}`)} busy={busy} error={error} onDismissError={() => setError('')} appDownloadUrl={support?.appDownloadUrl} />} />
+      <Route path='/register' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <AuthScreen auth={auth} setAuth={setAuth} mode='register' onSubmit={submitAuth} onSwitchMode={() => navigate('/login')} busy={busy} error={error} onDismissError={() => setError('')} appDownloadUrl={support?.appDownloadUrl} />} />
       <Route path='/admin/login' element={user ? (user.role === 'ADMIN' ? <Navigate to='/admin' replace /> : <Navigate to='/dashboard' replace />) : <AdminLoginScreen auth={auth} setAuth={setAuth} onSubmit={submitAdminAuth} busy={busy} error={error} onDismissError={() => setError('')} />} />
       <Route path='/admin' element={!user ? <Navigate to='/admin/login' replace /> : user.role === 'ADMIN' ? <ProtectedAdminApp user={user} onSignOut={signOut} busy={busy} notice={notice} error={error} setError={setError} setNotice={setNotice} /> : <AdminAccessDenied />} />
       <Route path='/admin/*' element={!user ? <Navigate to='/admin/login' replace /> : user.role === 'ADMIN' ? <ProtectedAdminApp user={user} onSignOut={signOut} busy={busy} notice={notice} error={error} setError={setError} setNotice={setNotice} /> : <AdminAccessDenied />} />
@@ -3513,8 +3513,21 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
   );
 }
 
-function AuthScreen({ auth, setAuth, mode, onSubmit, onSwitchMode, busy, error, onDismissError }) {
+function AuthScreen({ auth, setAuth, mode, onSubmit, onSwitchMode, busy, error, onDismissError, appDownloadUrl }) {
   const registering = mode === 'register';
+  const [downloadLink, setDownloadLink] = useState(appDownloadUrl || '');
+
+  useEffect(() => {
+    if (appDownloadUrl) {
+      setDownloadLink(appDownloadUrl);
+      return;
+    }
+    api('/config/public')
+      .then((cfg) => {
+        if (cfg?.appDownloadUrl) setDownloadLink(cfg.appDownloadUrl);
+      })
+      .catch(() => undefined);
+  }, [appDownloadUrl]);
 
   return (
     <main className='auth-page'>
@@ -3640,6 +3653,26 @@ function AuthScreen({ auth, setAuth, mode, onSubmit, onSwitchMode, busy, error, 
               {registering ? 'Sign in' : 'Register now'}
             </button>
           </p>
+
+          <div className='auth-download-box' style={{ marginTop: '20px', padding: '14px 16px', borderRadius: '12px', background: 'linear-gradient(135deg, rgba(23, 61, 49, 0.05), rgba(46, 125, 50, 0.08))', border: '1px solid rgba(23, 61, 49, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: '#173d31', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}>
+                <ArrowDownToLine size={18} />
+              </div>
+              <div>
+                <p style={{ margin: 0, fontSize: '13px', fontWeight: 700, color: '#173d31' }}>MKM Mobile App</p>
+                <p style={{ margin: 0, fontSize: '11px', color: '#556b60' }}>Install APK on your device</p>
+              </div>
+            </div>
+            <a
+              href={downloadLink || '/download'}
+              target={downloadLink && downloadLink.startsWith('http') ? '_blank' : undefined}
+              rel='noreferrer'
+              style={{ padding: '8px 14px', borderRadius: '8px', background: '#173d31', color: '#ffffff', fontSize: '12px', fontWeight: 700, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', boxShadow: '0 2px 6px rgba(23, 61, 49, 0.2)' }}
+            >
+              <ArrowDownToLine size={14} /> Download APK
+            </a>
+          </div>
         </div>
       </section>
     </main>
