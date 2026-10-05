@@ -2,7 +2,7 @@
   "name": "MKM Member Platform",
   "short_name": "MKM",
   "description": "MKM member platform for account, product and wallet services.",
-  "start_url": "/",
+  "start_url": "/register",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f3f6f2",

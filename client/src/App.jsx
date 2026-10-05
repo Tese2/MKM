@@ -5387,6 +5387,7 @@ function SupportPage() {
           {support.whatsappEnabled !== false && support.whatsappUrl && <a className='primary-button' href={support.whatsappUrl} target='_blank' rel='noreferrer'><MessageCircle size={16} /> {support.whatsappMessage ? 'Chat on WhatsApp' : 'Contact us on WhatsApp'}</a>}
           {support.officialGroupEnabled !== false && support.officialGroupUrl && <a className='secondary-button' href={support.officialGroupUrl} target='_blank' rel='noreferrer'>{support.officialGroupLabel ?? 'Join Official Group'}</a>}
           {support.customerSupportEnabled !== false && support.customerSupportUrl && <a className='secondary-button' href={support.customerSupportUrl} target='_blank' rel='noreferrer'>{support.customerSupportLabel ?? 'Customer Support'}</a>}
+          {support.appDownloadUrl && <a className='secondary-button' href={support.appDownloadUrl} target='_blank' rel='noreferrer'><ArrowDownToLine size={16} /> Download App</a>}
           {support.publicLinks?.length ? (
             <div className='product-details'>
               {support.publicLinks.filter((link) => link.enabled !== false).map((link) => (
