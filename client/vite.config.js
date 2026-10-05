@@ -13,8 +13,8 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port: 5173,
       proxy: {
-        '/api': apiUrl || 'http://localhost:4000',
-        '/uploads': apiUrl || 'http://localhost:4000',
+        '/api': apiUrl || 'http://127.0.0.1:4000',
+        '/uploads': apiUrl || 'http://127.0.0.1:4000',
       },
     },
   };

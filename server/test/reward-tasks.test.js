@@ -16,7 +16,6 @@ test('reward summaries aggregate claimable totals and statuses', () => {
   assert.equal(summary.pendingCount, 1);
   assert.equal(summary.completedCount, 1);
 });
-
 test('task summaries report completion progress', () => {
   const summary = summarizeTaskData([
     { status: 'COMPLETED' },
@@ -63,4 +62,76 @@ test('milestone eligibility uses approved deposit totals and preserves claim sta
   assert.equal(getMilestoneRewardStatus({ ...rule, qualifyingDeposits: '9000', claimStatus: 'PENDING' }), 'PENDING');
   assert.equal(getMilestoneRewardStatus({ ...rule, ruleStatus: 'DISABLED', qualifyingDeposits: '9000' }), 'NOT_ELIGIBLE');
   assert.equal(getMilestoneRewardStatus({ ...rule, ruleType: 'DAILY', qualifyingDeposits: '9000' }), 'NOT_ELIGIBLE');
+});
+
+test('claimDailyTask enforces 24-hour eligibility period before allowing claim', async () => {
+  const { claimDailyTask } = await import('../src/services/dailyTaskProcessor.js');
+
+  const mockClient = {
+    async query(sql, params) {
+      if (sql.includes('FOR UPDATE OF dtr')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: 'task-1',
+            user_id: 'user-1',
+            product_purchase_id: 'purchase-1',
+            business_date: '2026-10-04',
+            calculated_amount: '50.00',
+            status: 'WAITING',
+            purchase_status: 'ACTIVE',
+            activated_at: '2026-10-04T12:00:00.000Z',
+          }],
+        };
+      }
+      if (sql.includes('INTERVAL \'24 hours\'')) {
+        // Mock returning not yet eligible
+        return { rowCount: 1, rows: [{ eligible: false }] };
+      }
+      return { rowCount: 0, rows: [] };
+    },
+  };
+
+  await assert.rejects(
+    () => claimDailyTask(mockClient, { taskId: 'task-1', userId: 'user-1' }),
+    (err) => {
+      assert.equal(err.code, 'TASK_NOT_YET_ELIGIBLE');
+      assert.equal(err.status, 409);
+      return true;
+    },
+  );
+});
+
+test('claimDailyTask rejects claim for already completed task', async () => {
+  const { claimDailyTask } = await import('../src/services/dailyTaskProcessor.js');
+
+  const mockClient = {
+    async query(sql) {
+      if (sql.includes('FOR UPDATE OF dtr')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: 'task-2',
+            user_id: 'user-1',
+            product_purchase_id: 'purchase-1',
+            business_date: '2026-10-04',
+            calculated_amount: '50.00',
+            status: 'COMPLETED',
+            purchase_status: 'ACTIVE',
+            activated_at: '2026-10-04T12:00:00.000Z',
+          }],
+        };
+      }
+      return { rowCount: 0, rows: [] };
+    },
+  };
+
+  await assert.rejects(
+    () => claimDailyTask(mockClient, { taskId: 'task-2', userId: 'user-1' }),
+    (err) => {
+      assert.equal(err.code, 'TASK_ALREADY_PROCESSED');
+      assert.equal(err.status, 409);
+      return true;
+    },
+  );
 });

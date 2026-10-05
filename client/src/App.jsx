@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
-import { ArrowDownToLine, ArrowUpFromLine, Bell, CheckCircle2, Copy, FileText, Gift, LayoutDashboard, LogOut, Menu, MessageCircle, Package, ShieldCheck, UserCircle, Users, Wallet, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDownToLine, ArrowUpFromLine, Bell, CheckCircle2, CircleAlert, Copy, FileText, Gift, LayoutDashboard, LogOut, Menu, MessageCircle, Package, ShieldCheck, UserCircle, Users, Wallet, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { BrowserRouter, Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { api, assetUrl, jsonBody } from './services/api.js';
 import PublicWebsite from './PublicWebsite.jsx';
@@ -29,6 +29,54 @@ const rateFraction = (rate) => {
   const value = Number(rate ?? 0);
   return value > 1 ? value / 100 : value;
 };
+
+function SuccessToast({ message, onDismiss }) {
+  const dismissRef = useRef(onDismiss);
+  dismissRef.current = onDismiss;
+
+  useEffect(() => {
+    if (!message) return undefined;
+    const timer = window.setTimeout(() => dismissRef.current(), 5000);
+    return () => window.clearTimeout(timer);
+  }, [message]);
+
+  if (!message) return null;
+  return (
+    <div className='success-toast' role='status' aria-live='polite'>
+      <CheckCircle2 size={22} aria-hidden='true' />
+      <span>{message}</span>
+      <button type='button' onClick={onDismiss} aria-label='Dismiss success message'><X size={18} /></button>
+    </div>
+  );
+}
+
+function ErrorToast({ message, onDismiss }) {
+  const dismissRef = useRef(onDismiss);
+  dismissRef.current = onDismiss;
+  const [visible, setVisible] = useState(Boolean(message));
+
+  useEffect(() => {
+    if (!message) {
+      setVisible(false);
+      return undefined;
+    }
+    setVisible(true);
+    const timer = window.setTimeout(() => {
+      setVisible(false);
+      dismissRef.current?.();
+    }, 8000);
+    return () => window.clearTimeout(timer);
+  }, [message]);
+
+  if (!message || !visible) return null;
+  return (
+    <div className='error-toast' role='alert' aria-live='assertive'>
+      <CircleAlert size={22} aria-hidden='true' />
+      <span>{message}</span>
+      {onDismiss && <button type='button' onClick={onDismiss} aria-label='Dismiss error message'><X size={18} /></button>}
+    </div>
+  );
+}
 
 async function uploadAdminImage(file) {
   const form = new FormData();
@@ -416,16 +464,16 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path='/' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin/dashboard' : '/dashboard'} replace /> : <PublicWebsite user={null} onPurchase={purchase} busy={busy} />} />
-      <Route path='/login' element={<AuthScreen auth={auth} setAuth={setAuth} mode='login' onSubmit={submitAuth} onSwitchMode={() => navigate(`/register${location.search}`)} busy={busy} error={error} />} />
-      <Route path='/register' element={<AuthScreen auth={auth} setAuth={setAuth} mode='register' onSubmit={submitAuth} onSwitchMode={() => navigate('/login')} busy={busy} error={error} />} />
-      <Route path='/admin/login' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin/dashboard' : '/dashboard'} replace /> : <AdminLoginScreen auth={auth} setAuth={setAuth} onSubmit={submitAdminAuth} busy={busy} error={error} />} />
+      <Route path='/login' element={<AuthScreen auth={auth} setAuth={setAuth} mode='login' onSubmit={submitAuth} onSwitchMode={() => navigate(`/register${location.search}`)} busy={busy} error={error} onDismissError={() => setError('')} />} />
+      <Route path='/register' element={<AuthScreen auth={auth} setAuth={setAuth} mode='register' onSubmit={submitAuth} onSwitchMode={() => navigate('/login')} busy={busy} error={error} onDismissError={() => setError('')} />} />
+      <Route path='/admin/login' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin/dashboard' : '/dashboard'} replace /> : <AdminLoginScreen auth={auth} setAuth={setAuth} onSubmit={submitAdminAuth} busy={busy} error={error} onDismissError={() => setError('')} />} />
       <Route path='/admin/*' element={user?.role === 'ADMIN' ? <ProtectedAdminApp user={user} onSignOut={signOut} busy={busy} notice={notice} error={error} setError={setError} setNotice={setNotice} /> : <Navigate to={user ? '/dashboard' : '/admin/login'} replace />} />
-      <Route path='/*' element={user ? <ProtectedCustomerApp user={user} dashboard={dashboard} support={support} products={products} team={team} members={members} referralInfo={referralInfo} referralsLoading={referralsLoading} referralsError={referralsError} methods={methods} accounts={accounts} recharges={recharges} withdrawals={withdrawals} settings={settings} busy={busy} notice={notice} customerSuccessAlert={customerSuccessAlert} onDismissCustomerAlert={dismissCustomerSuccess} error={error} setError={setError} setNotice={setNotice} onCopyReferral={() => {
+      <Route path='/*' element={user ? <ProtectedCustomerApp user={user} dashboard={dashboard} support={support} products={products} team={team} members={members} referralInfo={referralInfo} referralsLoading={referralsLoading} referralsError={referralsError} setReferralsError={setReferralsError} methods={methods} accounts={accounts} recharges={recharges} withdrawals={withdrawals} settings={settings} busy={busy} notice={notice} customerSuccessAlert={customerSuccessAlert} onDismissCustomerAlert={dismissCustomerSuccess} error={error} setError={setError} setNotice={setNotice} onCopyReferral={() => {
         const code = dashboard?.referralCode ?? '';
         const referralLink = code ? `${window.location.origin}/register?ref=${encodeURIComponent(code)}` : '';
         navigator.clipboard?.writeText(referralLink).catch(() => undefined);
         setNotice(referralLink ? 'Referral link copied.' : 'No referral link available.');
-      }} onPurchase={purchase} onSubmitRecharge={submitRecharge} onSubmitWithdrawal={submitWithdrawal} onCustomerSuccess={showCustomerSuccess} onSaveAccount={async (event) => {
+      }} onPurchase={purchase} onSubmitRecharge={submitRecharge} onSubmitWithdrawal={submitWithdrawal} onCustomerSuccess={showCustomerSuccess} onRefreshDashboard={loadDashboard} onSaveAccount={async (event) => {
         event.preventDefault();
         const formElement = event.currentTarget;
         setBusy(true);
@@ -570,6 +618,8 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
   const adminNavItems = [
     { to: '/admin/dashboard', label: 'Dashboard' },
     { to: '/admin/customers', label: 'Customers' },
+    { to: '/admin/admins', label: 'Admin Management' },
+    { to: '/admin/profile', label: 'My Profile' },
     { to: '/admin/recharges', label: 'Recharges' },
     { to: '/admin/withdrawals', label: 'Withdrawals' },
     { to: '/admin/rewards', label: 'Rewards' },
@@ -590,6 +640,12 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
     }
     if (currentPath === '/admin/customers') {
       return <AdminCustomersPage customers={customers} paymentMethods={paymentMethods} onError={setError} />;
+    }
+    if (currentPath === '/admin/admins') {
+      return <AdminManagementPage user={user} onError={setError} onNotice={setNotice} />;
+    }
+    if (currentPath === '/admin/profile') {
+      return <AdminProfilePage user={user} onError={setError} onNotice={setNotice} />;
     }
     if (currentPath === '/admin/password') {
       return <AdminPasswordPage onError={setError} onNotice={setNotice} />;
@@ -664,8 +720,8 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
           </div>
         </header>
         <div className='content'>
-          {error && <div className='alert alert-error' role='alert'>{error}</div>}
-          {notice && <div className='alert alert-success' role='status'>{notice}</div>}
+          {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
+          {notice && <SuccessToast message={notice} onDismiss={() => setNotice('')} />}
           {renderAdminPage()}
         </div>
       </main>
@@ -725,6 +781,7 @@ function AdminCustomersPage({ customers: initialCustomers, paymentMethods, onErr
   const [pagination, setPagination] = useState(initialCustomers?.pagination ?? { page: 1, pages: 1, total: 0 });
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [loading, setLoading] = useState(false);
   const [resetCustomerId, setResetCustomerId] = useState(null);
   const [editProfileId, setEditProfileId] = useState(null);
@@ -732,17 +789,27 @@ function AdminCustomersPage({ customers: initialCustomers, paymentMethods, onErr
   const [pendingCustomerId, setPendingCustomerId] = useState(null);
   const [notice, setNotice] = useState('');
 
+  // Details modal state
+  const [viewCustomerDetails, setViewCustomerDetails] = useState(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+
+  // Deactivate modal state
+  const [deactivatingCustomer, setDeactivatingCustomer] = useState(null);
+  const [deactivateReason, setDeactivateReason] = useState('');
+  const [deactivateAdminPassword, setDeactivateAdminPassword] = useState('');
+
   useEffect(() => {
     setCustomers(initialCustomers?.items ?? []);
     setPagination(initialCustomers?.pagination ?? { page: 1, pages: 1, total: 0 });
   }, [initialCustomers]);
 
-  async function loadCustomers(nextPage = 1, nextQuery = query) {
+  async function loadCustomers(nextPage = 1, nextQuery = query, nextStatus = statusFilter) {
     setLoading(true);
     onError('');
     try {
       const params = new URLSearchParams({ page: String(nextPage), limit: '25' });
       if (nextQuery.trim()) params.set('search', nextQuery.trim());
+      if (nextStatus) params.set('status', nextStatus);
       const result = await api(`/admin/customers?${params}`);
       setCustomers(result.items ?? []);
       setPagination(result.pagination ?? { page: nextPage, pages: 1, total: 0 });
@@ -750,6 +817,19 @@ function AdminCustomersPage({ customers: initialCustomers, paymentMethods, onErr
       onError(cause.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadDetails(customerId) {
+    setDetailsLoading(true);
+    onError('');
+    try {
+      const details = await api(`/admin/customers/${customerId}`);
+      setViewCustomerDetails(details);
+    } catch (cause) {
+      onError(cause.message);
+    } finally {
+      setDetailsLoading(false);
     }
   }
 
@@ -817,28 +897,204 @@ function AdminCustomersPage({ customers: initialCustomers, paymentMethods, onErr
     }
   }
 
+  async function handleToggleStatus(customer, targetStatus, reason = '', adminPassword = '') {
+    setPendingCustomerId(customer.id);
+    setNotice('');
+    onError('');
+    try {
+      const payload = { status: targetStatus };
+      if (reason.trim()) payload.reason = reason.trim();
+      if (adminPassword.trim()) payload.adminPassword = adminPassword.trim();
+      const res = await api(`/admin/customers/${customer.id}/status`, {
+        method: 'PATCH',
+        ...jsonBody(payload),
+      });
+      setNotice(
+        targetStatus === 'ACTIVE'
+          ? `Customer ${customer.fullName} has been reactivated successfully.`
+          : `Customer ${customer.fullName} has been deactivated. ${res.sessionsRevoked ?? 0} active session(s) were revoked. Financial history remains preserved.`
+      );
+      setDeactivatingCustomer(null);
+      setDeactivateReason('');
+      setDeactivateAdminPassword('');
+      await loadCustomers(pagination.page);
+    } catch (cause) {
+      onError(cause.message);
+    } finally {
+      setPendingCustomerId(null);
+    }
+  }
+
   return (
     <section className='surface table-surface'>
       <div className='surface-heading'>
         <div>
           <p className='eyebrow'>CUSTOMERS</p>
-          <h3>Customer list</h3>
+          <h3>Customer list & account management</h3>
         </div>
       </div>
-      <form className='customer-search-row' onSubmit={(event) => { event.preventDefault(); setQuery(search); loadCustomers(1, search); }}>
+      <form
+        className='customer-search-row'
+        onSubmit={(event) => {
+          event.preventDefault();
+          setQuery(search);
+          loadCustomers(1, search, statusFilter);
+        }}
+      >
         <label className='field'>
           <span>Search customers</span>
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder='Name, phone, or referral code' />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder='Name, phone, or referral code'
+          />
         </label>
-        <button className='primary-button' type='submit' disabled={loading}>{loading ? 'Searching…' : 'Search'}</button>
-        <button className='secondary-button' type='button' disabled={loading} onClick={() => { setSearch(''); setQuery(''); loadCustomers(1, ''); }}>Clear</button>
+        <label className='field' style={{ maxWidth: '180px' }}>
+          <span>Status filter</span>
+          <select
+            value={statusFilter}
+            onChange={(event) => {
+              const val = event.target.value;
+              setStatusFilter(val);
+              loadCustomers(1, search, val);
+            }}
+          >
+            <option value=''>All Statuses</option>
+            <option value='ACTIVE'>Active</option>
+            <option value='SUSPENDED'>Suspended</option>
+            <option value='DEACTIVATED'>Deactivated</option>
+          </select>
+        </label>
+        <button className='primary-button' type='submit' disabled={loading}>
+          {loading ? 'Searching…' : 'Search'}
+        </button>
+        <button
+          className='secondary-button'
+          type='button'
+          disabled={loading}
+          onClick={() => {
+            setSearch('');
+            setQuery('');
+            setStatusFilter('');
+            loadCustomers(1, '', '');
+          }}
+        >
+          Clear
+        </button>
       </form>
-      {notice && <div className='alert alert-success' role='status'>{notice}</div>}
+      {notice && <SuccessToast message={notice} onDismiss={() => setNotice('')} />}
+
+      {/* Customer Details Modal */}
+      {viewCustomerDetails && (
+        <div className='surface form-surface' style={{ margin: '16px 0', border: '2px solid var(--line)' }}>
+          <div className='surface-heading'>
+            <div>
+              <p className='eyebrow'>CUSTOMER DETAILS</p>
+              <h3>{viewCustomerDetails.fullName} ({viewCustomerDetails.phoneNumber})</h3>
+            </div>
+            <button className='secondary-button' type='button' onClick={() => setViewCustomerDetails(null)}>✕ Close</button>
+          </div>
+          <div className='metric-grid' style={{ marginTop: '12px' }}>
+            <div className='metric'><span>Status</span><StatusBadge status={viewCustomerDetails.status} /></div>
+            <div className='metric'><span>Available Wallet</span><strong className='green'>{money(viewCustomerDetails.wallet?.availableBalance ?? 0)}</strong></div>
+            <div className='metric'><span>Locked Wallet</span><strong>{money(viewCustomerDetails.wallet?.lockedBalance ?? 0)}</strong></div>
+            <div className='metric'><span>Approved Deposits</span><strong className='green'>{money(viewCustomerDetails.recharges?.approvedTotal ?? 0)} ({viewCustomerDetails.recharges?.count ?? 0})</strong></div>
+            <div className='metric'><span>Completed Payouts</span><strong>{money(viewCustomerDetails.withdrawals?.completedTotal ?? 0)} ({viewCustomerDetails.withdrawals?.count ?? 0})</strong></div>
+            <div className='metric'><span>Active Packages</span><strong className='green'>{viewCustomerDetails.purchases?.activeCount ?? 0}</strong></div>
+          </div>
+          {viewCustomerDetails.recentTransactions?.length > 0 && (
+            <div style={{ marginTop: '14px' }}>
+              <p className='eyebrow'>RECENT TRANSACTIONS</p>
+              <div className='table-wrap'>
+                <table>
+                  <thead>
+                    <tr><th>Type</th><th>Amount</th><th>Direction</th><th>Status</th><th>Description</th><th>Date</th></tr>
+                  </thead>
+                  <tbody>
+                    {viewCustomerDetails.recentTransactions.map((tx) => (
+                      <tr key={tx.id}>
+                        <td>{tx.type}</td>
+                        <td>{money(tx.amount)}</td>
+                        <td><span style={{ color: tx.direction === 'CREDIT' ? '#16a34a' : '#dc2626' }}>{tx.direction}</span></td>
+                        <td><StatusBadge status={tx.status} /></td>
+                        <td>{tx.description}</td>
+                        <td>{new Date(tx.createdAt).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Deactivation Confirmation Modal */}
+      {deactivatingCustomer && (
+        <div className='surface form-surface' style={{ margin: '16px 0', border: '2px solid #ef4444', background: '#fef2f2' }}>
+          <div className='surface-heading'>
+            <div>
+              <p className='eyebrow' style={{ color: '#b91c1c' }}>PROTECTED ACTION: DEACTIVATE CUSTOMER</p>
+              <h3>Deactivate {deactivatingCustomer.fullName}?</h3>
+            </div>
+            <button className='secondary-button' type='button' onClick={() => setDeactivatingCustomer(null)}>Cancel</button>
+          </div>
+          <p style={{ fontSize: '13px', color: '#7f1d1d', margin: '8px 0' }}>
+            Deactivating this customer will immediately revoke all their active login sessions. They will be prohibited from signing in or accessing account services.
+            <strong> All financial records, wallets, purchase history, ledger entries, and audit logs remain strictly preserved.</strong>
+          </p>
+          <div className='form-stack' style={{ maxWidth: '420px', marginTop: '12px' }}>
+            <label className='field'>
+              <span>Reason for deactivation (optional)</span>
+              <input
+                value={deactivateReason}
+                onChange={(e) => setDeactivateReason(e.target.value)}
+                placeholder='e.g. Terms violation or suspicious activity'
+                maxLength={500}
+              />
+            </label>
+            <label className='field'>
+              <span>Confirm admin password (optional)</span>
+              <input
+                type='password'
+                value={deactivateAdminPassword}
+                onChange={(e) => setDeactivateAdminPassword(e.target.value)}
+                placeholder='Your admin password'
+                autoComplete='current-password'
+              />
+            </label>
+            <div className='button-row compact'>
+              <button
+                className='primary-button'
+                type='button'
+                style={{ background: '#dc2626', borderColor: '#b91c1c' }}
+                disabled={pendingCustomerId === deactivatingCustomer.id}
+                onClick={() => handleToggleStatus(deactivatingCustomer, 'DEACTIVATED', deactivateReason, deactivateAdminPassword)}
+              >
+                {pendingCustomerId === deactivatingCustomer.id ? 'Deactivating…' : 'Confirm Deactivate'}
+              </button>
+              <button className='secondary-button' type='button' onClick={() => setDeactivatingCustomer(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {customers.length ? (
         <div className='table-wrap'>
           <table>
             <thead>
-              <tr><th>Name</th><th>Phone</th><th>Referral</th><th>Withdrawal accounts</th><th>Role</th><th>Registered</th><th>Customer actions</th></tr>
+              <tr>
+                <th>Name</th>
+                <th>Phone</th>
+                <th>Status</th>
+                <th>Wallet Balance</th>
+                <th>Referral</th>
+                <th>Withdrawal accounts</th>
+                <th>Registered</th>
+                <th>Customer actions</th>
+              </tr>
             </thead>
             <tbody>
               {customers.map((customer) => (
@@ -854,12 +1110,26 @@ function AdminCustomersPage({ customers: initialCustomers, paymentMethods, onErr
                           <button className='secondary-button' type='button' onClick={() => setEditProfileId(null)}>Cancel</button>
                         </div>
                       </form>
-                    ) : <><strong>{customer.fullName}</strong><button className='secondary-button' type='button' onClick={() => setEditProfileId(customer.id)}>Edit profile</button></>}
+                    ) : (
+                      <>
+                        <strong>{customer.fullName}</strong>
+                        <button className='secondary-button' type='button' style={{ marginLeft: '6px', padding: '2px 8px', fontSize: '11px' }} onClick={() => setEditProfileId(customer.id)}>Edit</button>
+                      </>
+                    )}
                   </td>
                   <td>{customer.phoneNumber}</td>
+                  <td><StatusBadge status={customer.status} /></td>
+                  <td>
+                    <span style={{ color: '#16a34a', fontWeight: 600, fontSize: '12px', display: 'block' }}>
+                      Avail: {money(customer.availableBalance ?? 0)}
+                    </span>
+                    <small style={{ color: '#6b7280', fontSize: '11px', display: 'block' }}>
+                      Locked: {money(customer.lockedBalance ?? 0)}
+                    </small>
+                  </td>
                   <td>{customer.referralCode}</td>
                   <td>{customer.withdrawalAccounts?.length ? customer.withdrawalAccounts.map((account) => (
-                    <section className='nested-surface form-stack' key={account.id}>
+                    <section className='nested-surface form-stack' key={account.id} style={{ marginBottom: '4px' }}>
                       <strong>{account.paymentProvider}</strong>
                       {editAccountId === account.id ? (
                         <form className='form-stack' onSubmit={(event) => saveWithdrawalAccount(event, customer, account)}>
@@ -880,29 +1150,69 @@ function AdminCustomersPage({ customers: initialCustomers, paymentMethods, onErr
                       ) : (
                         <>
                           <small>{account.accountHolderName} · {account.accountNumber || account.phoneNumber || '—'}</small>
-                          <button className='secondary-button' type='button' onClick={() => setEditAccountId(account.id)}>Edit payout details</button>
+                          <button className='secondary-button' type='button' style={{ padding: '2px 8px', fontSize: '11px' }} onClick={() => setEditAccountId(account.id)}>Edit payout</button>
                         </>
                       )}
                     </section>
                   )) : '—'}</td>
-                  <td>{customer.role}</td>
                   <td>{new Date(customer.registeredAt).toLocaleDateString()}</td>
                   <td>
-                    {customer.role === 'CUSTOMER' && (
-                      resetCustomerId === customer.id ? (
-                        <form className='form-stack' onSubmit={(event) => resetPassword(event, customer)}>
-                          <label className='field'><span>Your admin password</span><input name='adminPassword' type='password' autoComplete='current-password' required /></label>
-                          <label className='field'><span>New customer password</span><input name='newPassword' type='password' minLength='6' maxLength='128' autoComplete='new-password' required /></label>
-                          <label className='field'><span>Confirm new password</span><input name='confirmNewPassword' type='password' minLength='6' maxLength='128' autoComplete='new-password' required /></label>
-                          <div className='button-row compact'>
-                            <button className='primary-button' type='submit' disabled={pendingCustomerId === customer.id}>{pendingCustomerId === customer.id ? 'Resetting…' : 'Reset password'}</button>
-                            <button className='secondary-button' type='button' disabled={pendingCustomerId === customer.id} onClick={() => setResetCustomerId(null)}>Cancel</button>
-                          </div>
-                        </form>
-                      ) : <div className='form-stack'>
-                        <button className='secondary-button' type='button' onClick={() => { setNotice(''); setResetCustomerId(customer.id); }}>Reset password</button>
-                      </div>
-                    )}
+                    <div className='form-stack' style={{ gap: '6px' }}>
+                      <button
+                        className='secondary-button'
+                        type='button'
+                        style={{ padding: '3px 8px', fontSize: '11px' }}
+                        disabled={detailsLoading}
+                        onClick={() => loadDetails(customer.id)}
+                      >
+                        View details
+                      </button>
+
+                      {customer.role === 'CUSTOMER' && (
+                        resetCustomerId === customer.id ? (
+                          <form className='form-stack' onSubmit={(event) => resetPassword(event, customer)}>
+                            <label className='field'><span>Admin password</span><input name='adminPassword' type='password' autoComplete='current-password' required /></label>
+                            <label className='field'><span>New password</span><input name='newPassword' type='password' minLength='6' maxLength='128' autoComplete='new-password' required /></label>
+                            <label className='field'><span>Confirm password</span><input name='confirmNewPassword' type='password' minLength='6' maxLength='128' autoComplete='new-password' required /></label>
+                            <div className='button-row compact'>
+                              <button className='primary-button' type='submit' disabled={pendingCustomerId === customer.id}>{pendingCustomerId === customer.id ? 'Resetting…' : 'Reset'}</button>
+                              <button className='secondary-button' type='button' onClick={() => setResetCustomerId(null)}>Cancel</button>
+                            </div>
+                          </form>
+                        ) : (
+                          <button className='secondary-button' type='button' style={{ padding: '3px 8px', fontSize: '11px' }} onClick={() => { setNotice(''); setResetCustomerId(customer.id); }}>
+                            Reset password
+                          </button>
+                        )
+                      )}
+
+                      {customer.role === 'CUSTOMER' && (
+                        customer.status === 'ACTIVE' ? (
+                          <button
+                            className='secondary-button'
+                            type='button'
+                            style={{ padding: '3px 8px', fontSize: '11px', color: '#dc2626', borderColor: '#fca5a5' }}
+                            disabled={pendingCustomerId === customer.id}
+                            onClick={() => {
+                              setNotice('');
+                              setDeactivatingCustomer(customer);
+                            }}
+                          >
+                            Deactivate
+                          </button>
+                        ) : (
+                          <button
+                            className='secondary-button'
+                            type='button'
+                            style={{ padding: '3px 8px', fontSize: '11px', color: '#16a34a', borderColor: '#86efac' }}
+                            disabled={pendingCustomerId === customer.id}
+                            onClick={() => handleToggleStatus(customer, 'ACTIVE')}
+                          >
+                            {pendingCustomerId === customer.id ? 'Reactivating…' : 'Reactivate'}
+                          </button>
+                        )
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -915,6 +1225,665 @@ function AdminCustomersPage({ customers: initialCustomers, paymentMethods, onErr
         <button className='secondary-button' type='button' disabled={loading || (pagination.page ?? 1) <= 1} onClick={() => loadCustomers((pagination.page ?? 1) - 1)}>Previous</button>
         <button className='secondary-button' type='button' disabled={loading || (pagination.page ?? 1) >= (pagination.pages ?? 1)} onClick={() => loadCustomers((pagination.page ?? 1) + 1)}>Next</button>
       </div>
+    </section>
+  );
+}
+
+function AdminProfilePage({ user, onError, onNotice }) {
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [passwordBusy, setPasswordBusy] = useState(false);
+
+  async function loadProfile() {
+    setLoading(true);
+    onError('');
+    try {
+      const data = await api('/admin/profile');
+      setProfile(data);
+    } catch (cause) {
+      onError(cause.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadProfile();
+  }, []);
+
+  async function saveProfile(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form));
+    setProfileBusy(true);
+    onError('');
+    onNotice('');
+    try {
+      const updated = await api('/admin/profile', {
+        method: 'PATCH',
+        ...jsonBody(data),
+      });
+      setProfile(updated);
+      onNotice('Your administrator profile was updated successfully.');
+    } catch (cause) {
+      onError(cause.message);
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
+  async function changePassword(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form));
+    setPasswordBusy(true);
+    onError('');
+    onNotice('');
+    try {
+      await api('/admin/profile/password', {
+        method: 'PATCH',
+        ...jsonBody(data),
+      });
+      form.reset();
+      onNotice('Your admin password was changed. All other active sessions were signed out.');
+    } catch (cause) {
+      onError(cause.message);
+    } finally {
+      setPasswordBusy(false);
+    }
+  }
+
+  if (loading) {
+    return <section className='surface form-surface'><Empty>Loading administrator profile…</Empty></section>;
+  }
+
+  const p = profile ?? user ?? {};
+
+  return (
+    <div className='form-stack' style={{ gap: '20px' }}>
+      {/* Account Overview Card */}
+      <section className='surface form-surface'>
+        <div className='surface-heading'>
+          <div>
+            <p className='eyebrow'>ADMIN PROFILE</p>
+            <h3>Account overview</h3>
+          </div>
+          <StatusBadge status={p.status ?? 'ACTIVE'} />
+        </div>
+        <div className='metric-grid' style={{ marginTop: '14px' }}>
+          <div className='metric'>
+            <span>Administrator</span>
+            <strong>{p.fullName}</strong>
+            <small>NAME</small>
+          </div>
+          <div className='metric'>
+            <span>Phone number</span>
+            <strong>{p.phoneNumber}</strong>
+            <small>ETHIOPIAN PHONE</small>
+          </div>
+          <div className='metric'>
+            <span>Access level</span>
+            <strong className={p.isSuperAdmin ? 'green' : ''}>
+              {p.isSuperAdmin ? 'SUPER ADMIN' : 'ADMINISTRATOR'}
+            </strong>
+            <small>ROLE</small>
+          </div>
+          <div className='metric'>
+            <span>Member since</span>
+            <strong>{p.registeredAt ? new Date(p.registeredAt).toLocaleDateString() : '—'}</strong>
+            <small>REGISTERED</small>
+          </div>
+        </div>
+
+        {/* Assigned Privileges */}
+        <div style={{ marginTop: '16px' }}>
+          <p className='eyebrow'>ASSIGNED PRIVILEGES</p>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' }}>
+            {p.isSuperAdmin || p.privileges?.includes('*') ? (
+              <span className='status-badge status-approved' style={{ padding: '6px 12px', fontSize: '12px' }}>
+                ★ Full Unrestricted Privileges (Super Admin)
+              </span>
+            ) : p.privileges?.length ? (
+              p.privileges.map((priv) => (
+                <span key={priv} className='status-badge' style={{ background: '#e0f2fe', color: '#0369a1', padding: '4px 10px' }}>
+                  {priv}
+                </span>
+              ))
+            ) : (
+              <span style={{ fontSize: '13px', opacity: 0.6 }}>No specific module privileges assigned.</span>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* Edit Profile Information Form */}
+      <section className='surface form-surface'>
+        <div className='surface-heading'>
+          <div>
+            <p className='eyebrow'>PERSONAL INFORMATION</p>
+            <h3>Edit profile details</h3>
+          </div>
+        </div>
+        <form className='form-stack' onSubmit={saveProfile} style={{ maxWidth: '480px', marginTop: '12px' }}>
+          <label className='field'>
+            <span>Full name</span>
+            <input name='fullName' defaultValue={p.fullName ?? ''} minLength='2' maxLength='120' required />
+          </label>
+          <label className='field'>
+            <span>Phone number (9 digits, starts with 9 or 7)</span>
+            <input name='phoneNumber' defaultValue={p.phoneNumber ?? ''} pattern='[97][0-9]{8}' maxLength='9' required />
+          </label>
+          <button className='primary-button' type='submit' disabled={profileBusy}>
+            {profileBusy ? 'Saving profile…' : 'Save profile changes'} <span>↗</span>
+          </button>
+        </form>
+      </section>
+
+      {/* Security & Password Change */}
+      <section className='surface form-surface'>
+        <div className='surface-heading'>
+          <div>
+            <p className='eyebrow'>SECURITY</p>
+            <h3>Change administrator password</h3>
+          </div>
+        </div>
+        <p className='form-subtitle'>
+          Confirm your current password to set a new one. Changing your password immediately revokes all other active administrator sessions.
+        </p>
+        <form className='form-stack' onSubmit={changePassword} style={{ maxWidth: '480px', marginTop: '12px' }}>
+          <label className='field'>
+            <span>Current password</span>
+            <input name='currentPassword' type='password' autoComplete='current-password' required />
+          </label>
+          <label className='field'>
+            <span>New password (min 6 characters)</span>
+            <input name='newPassword' type='password' minLength='6' maxLength='128' autoComplete='new-password' required />
+          </label>
+          <label className='field'>
+            <span>Confirm new password</span>
+            <input name='confirmNewPassword' type='password' minLength='6' maxLength='128' autoComplete='new-password' required />
+          </label>
+          <button className='primary-button' type='submit' disabled={passwordBusy}>
+            {passwordBusy ? 'Updating password…' : 'Change password'} <span>↗</span>
+          </button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+const ALL_PRIVILEGES_LIST = [
+  { key: 'CUSTOMER_VIEW', label: 'View customers' },
+  { key: 'CUSTOMER_MANAGE', label: 'Manage & deactivate customers' },
+  { key: 'PRODUCT_VIEW', label: 'View products' },
+  { key: 'PRODUCT_MANAGE', label: 'Create & edit products' },
+  { key: 'RECHARGE_VIEW', label: 'View deposits & recharges' },
+  { key: 'RECHARGE_APPROVE', label: 'Approve & reject recharges' },
+  { key: 'WITHDRAWAL_VIEW', label: 'View withdrawal requests' },
+  { key: 'WITHDRAWAL_APPROVE', label: 'Approve & process payouts' },
+  { key: 'TRANSACTION_VIEW', label: 'View ledger & transactions' },
+  { key: 'TASK_VIEW', label: 'View daily task progress' },
+  { key: 'TASK_MANAGE', label: 'Manage daily tasks & rewards' },
+  { key: 'REFERRAL_VIEW', label: 'View referral network' },
+  { key: 'SETTINGS_VIEW', label: 'View platform settings' },
+  { key: 'SETTINGS_MANAGE', label: 'Modify platform settings' },
+  { key: 'ADMIN_VIEW', label: 'View administrator accounts' },
+  { key: 'ADMIN_CREATE', label: 'Create new administrators' },
+  { key: 'ADMIN_MANAGE', label: 'Manage administrator privileges' },
+];
+
+function AdminManagementPage({ user, onError, onNotice }) {
+  const [admins, setAdmins] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [editingAdmin, setEditingAdmin] = useState(null);
+  const [busyAdminId, setBusyAdminId] = useState(null);
+  const [addBusy, setAddBusy] = useState(false);
+
+  // Form states for adding admin
+  const [addIsSuperAdmin, setAddIsSuperAdmin] = useState(false);
+  const [addPrivileges, setAddPrivileges] = useState([]);
+
+  // Form states for editing privileges
+  const [editIsSuperAdmin, setEditIsSuperAdmin] = useState(false);
+  const [editPrivileges, setEditPrivileges] = useState([]);
+
+  async function loadAdmins() {
+    setLoading(true);
+    onError('');
+    try {
+      const data = await api('/admin/admins');
+      setAdmins(data);
+    } catch (cause) {
+      onError(cause.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadAdmins();
+  }, []);
+
+  function toggleAddPrivilege(key) {
+    setAddPrivileges((prev) =>
+      prev.includes(key) ? prev.filter((p) => p !== key) : [...prev, key]
+    );
+  }
+
+  function toggleEditPrivilege(key) {
+    setEditPrivileges((prev) =>
+      prev.includes(key) ? prev.filter((p) => p !== key) : [...prev, key]
+    );
+  }
+
+  async function submitAddAdmin(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = Object.fromEntries(new FormData(form));
+    data.isSuperAdmin = addIsSuperAdmin;
+    data.privileges = addIsSuperAdmin ? ['*'] : addPrivileges;
+
+    setAddBusy(true);
+    onError('');
+    onNotice('');
+    try {
+      const created = await api('/admin/admins', {
+        method: 'POST',
+        ...jsonBody(data),
+      });
+      onNotice(`Administrator ${created.fullName} created successfully.`);
+      setAddModalOpen(false);
+      setAddIsSuperAdmin(false);
+      setAddPrivileges([]);
+      form.reset();
+      await loadAdmins();
+    } catch (cause) {
+      onError(cause.message);
+    } finally {
+      setAddBusy(false);
+    }
+  }
+
+  async function submitEditPrivileges(event) {
+    event.preventDefault();
+    if (!editingAdmin) return;
+    setBusyAdminId(editingAdmin.id);
+    onError('');
+    onNotice('');
+    try {
+      const payload = {
+        isSuperAdmin: editIsSuperAdmin,
+        privileges: editIsSuperAdmin ? ['*'] : editPrivileges,
+      };
+      const updated = await api(`/admin/admins/${editingAdmin.id}`, {
+        method: 'PATCH',
+        ...jsonBody(payload),
+      });
+      onNotice(`Privileges for ${updated.fullName} updated successfully.`);
+      setEditingAdmin(null);
+      await loadAdmins();
+    } catch (cause) {
+      onError(cause.message);
+    } finally {
+      setBusyAdminId(null);
+    }
+  }
+
+  async function toggleAdminStatus(admin, newStatus) {
+    setBusyAdminId(admin.id);
+    onError('');
+    onNotice('');
+    try {
+      const updated = await api(`/admin/admins/${admin.id}`, {
+        method: 'PATCH',
+        ...jsonBody({ status: newStatus }),
+      });
+      onNotice(
+        newStatus === 'ACTIVE'
+          ? `Administrator ${admin.fullName} reactivated.`
+          : `Administrator ${admin.fullName} deactivated. All their active sessions were revoked.`
+      );
+      await loadAdmins();
+    } catch (cause) {
+      onError(cause.message);
+    } finally {
+      setBusyAdminId(null);
+    }
+  }
+
+  return (
+    <section className='surface table-surface'>
+      <div className='surface-heading'>
+        <div>
+          <p className='eyebrow'>ADMINISTRATION</p>
+          <h3>Administrator accounts & RBAC privilege management</h3>
+        </div>
+        <button
+          className='primary-button'
+          type='button'
+          onClick={() => {
+            setAddModalOpen(true);
+            setAddIsSuperAdmin(false);
+            setAddPrivileges([]);
+          }}
+        >
+          + Add New Admin
+        </button>
+      </div>
+
+      {/* Add New Admin Modal / Drawer */}
+      {addModalOpen && (
+        <div className='surface form-surface' style={{ margin: '16px 0', border: '2px solid var(--line)' }}>
+          <div className='surface-heading'>
+            <div>
+              <p className='eyebrow'>CREATE ADMINISTRATOR</p>
+              <h3>New administrator details</h3>
+            </div>
+            <button className='secondary-button' type='button' onClick={() => setAddModalOpen(false)}>✕ Cancel</button>
+          </div>
+          <form className='form-stack' onSubmit={submitAddAdmin} style={{ marginTop: '14px' }}>
+            <div className='profile-form-grid'>
+              <label className='field'>
+                <span>Full name</span>
+                <input name='fullName' placeholder='e.g. Abebe Kebede' minLength='2' maxLength='120' required />
+              </label>
+              <label className='field'>
+                <span>Ethiopian phone (9 digits, 9... or 7...)</span>
+                <input name='phoneNumber' placeholder='911223344' pattern='[97][0-9]{8}' maxLength='9' required />
+              </label>
+              <label className='field'>
+                <span>Password</span>
+                <input name='password' type='password' minLength='6' maxLength='128' autoComplete='new-password' required />
+              </label>
+              <label className='field'>
+                <span>Confirm password</span>
+                <input name='confirmPassword' type='password' minLength='6' maxLength='128' autoComplete='new-password' required />
+              </label>
+            </div>
+
+            {/* Super admin toggle */}
+            <div style={{ marginTop: '8px' }}>
+              <label className='field checkbox-field' style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                <input
+                  type='checkbox'
+                  checked={addIsSuperAdmin}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setAddIsSuperAdmin(checked);
+                    if (checked) {
+                      setAddPrivileges(ALL_PRIVILEGES_LIST.map((p) => p.key));
+                    }
+                  }}
+                />
+                <strong>Super Administrator (Full unrestricted access across all modules)</strong>
+              </label>
+            </div>
+
+            {/* Privilege Selection */}
+            {!addIsSuperAdmin && (
+              <div style={{ marginTop: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <p className='eyebrow' style={{ margin: 0 }}>ASSIGN SPECIFIC MODULE PRIVILEGES</p>
+                  <div className='button-row compact'>
+                    <button
+                      type='button'
+                      className='secondary-button'
+                      style={{ padding: '2px 8px', fontSize: '11px' }}
+                      onClick={() => setAddPrivileges(ALL_PRIVILEGES_LIST.map((p) => p.key))}
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type='button'
+                      className='secondary-button'
+                      style={{ padding: '2px 8px', fontSize: '11px' }}
+                      onClick={() => setAddPrivileges([])}
+                    >
+                      Deselect all
+                    </button>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '8px' }}>
+                  {ALL_PRIVILEGES_LIST.map((p) => (
+                    <label
+                      key={p.key}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 8px',
+                        borderRadius: '4px',
+                        background: addPrivileges.includes(p.key) ? '#e0f2fe' : '#f9fafb',
+                        border: '1px solid #e5e7eb',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                      }}
+                    >
+                      <input
+                        type='checkbox'
+                        checked={addPrivileges.includes(p.key)}
+                        onChange={() => toggleAddPrivilege(p.key)}
+                      />
+                      <span><strong>{p.key}</strong><br /><small style={{ opacity: 0.7 }}>{p.label}</small></span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className='button-row' style={{ marginTop: '16px' }}>
+              <button className='primary-button' type='submit' disabled={addBusy}>
+                {addBusy ? 'Creating administrator…' : 'Create Administrator'} <span>↗</span>
+              </button>
+              <button className='secondary-button' type='button' onClick={() => setAddModalOpen(false)}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* Edit Admin Privileges Modal */}
+      {editingAdmin && (
+        <div className='surface form-surface' style={{ margin: '16px 0', border: '2px solid #0284c7' }}>
+          <div className='surface-heading'>
+            <div>
+              <p className='eyebrow'>MANAGE PRIVILEGES</p>
+              <h3>Edit access for {editingAdmin.fullName} ({editingAdmin.phoneNumber})</h3>
+            </div>
+            <button className='secondary-button' type='button' onClick={() => setEditingAdmin(null)}>✕ Cancel</button>
+          </div>
+          <form className='form-stack' onSubmit={submitEditPrivileges} style={{ marginTop: '14px' }}>
+            <label className='field checkbox-field' style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+              <input
+                type='checkbox'
+                checked={editIsSuperAdmin}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  setEditIsSuperAdmin(checked);
+                  if (checked) {
+                    setEditPrivileges(ALL_PRIVILEGES_LIST.map((p) => p.key));
+                  }
+                }}
+              />
+              <strong>Super Administrator (Full unrestricted access)</strong>
+            </label>
+
+            {!editIsSuperAdmin && (
+              <div style={{ marginTop: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <p className='eyebrow' style={{ margin: 0 }}>ASSIGN SPECIFIC MODULE PRIVILEGES</p>
+                  <div className='button-row compact'>
+                    <button
+                      type='button'
+                      className='secondary-button'
+                      style={{ padding: '2px 8px', fontSize: '11px' }}
+                      onClick={() => setEditPrivileges(ALL_PRIVILEGES_LIST.map((p) => p.key))}
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type='button'
+                      className='secondary-button'
+                      style={{ padding: '2px 8px', fontSize: '11px' }}
+                      onClick={() => setEditPrivileges([])}
+                    >
+                      Deselect all
+                    </button>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '8px' }}>
+                  {ALL_PRIVILEGES_LIST.map((p) => (
+                    <label
+                      key={p.key}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 8px',
+                        borderRadius: '4px',
+                        background: editPrivileges.includes(p.key) ? '#e0f2fe' : '#f9fafb',
+                        border: '1px solid #e5e7eb',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                      }}
+                    >
+                      <input
+                        type='checkbox'
+                        checked={editPrivileges.includes(p.key)}
+                        onChange={() => toggleEditPrivilege(p.key)}
+                      />
+                      <span><strong>{p.key}</strong><br /><small style={{ opacity: 0.7 }}>{p.label}</small></span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className='button-row' style={{ marginTop: '16px' }}>
+              <button className='primary-button' type='submit' disabled={busyAdminId === editingAdmin.id}>
+                {busyAdminId === editingAdmin.id ? 'Saving…' : 'Save Privileges'} <span>↗</span>
+              </button>
+              <button className='secondary-button' type='button' onClick={() => setEditingAdmin(null)}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {loading ? (
+        <Empty>Loading administrators…</Empty>
+      ) : admins.length ? (
+        <div className='table-wrap'>
+          <table>
+            <thead>
+              <tr>
+                <th>Administrator</th>
+                <th>Phone</th>
+                <th>Role / Access</th>
+                <th>Privileges</th>
+                <th>Status</th>
+                <th>Registered</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {admins.map((admin) => {
+                const isSelf = admin.id === user?.id;
+                const privs = Array.isArray(admin.privileges) ? admin.privileges : [];
+                return (
+                  <tr key={admin.id}>
+                    <td>
+                      <strong>{admin.fullName}</strong>
+                      {isSelf && <small style={{ marginLeft: '6px', color: '#0369a1', fontWeight: 600 }}>(You)</small>}
+                    </td>
+                    <td>{admin.phoneNumber}</td>
+                    <td>
+                      {admin.isSuperAdmin ? (
+                        <span className='status-badge status-approved'>SUPER ADMIN</span>
+                      ) : (
+                        <span className='status-badge'>ADMIN</span>
+                      )}
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', maxWidth: '280px' }}>
+                        {admin.isSuperAdmin || privs.includes('*') ? (
+                          <span style={{ fontSize: '11px', color: '#16a34a', fontWeight: 600 }}>All Privileges (*)</span>
+                        ) : privs.length ? (
+                          privs.slice(0, 4).map((pr) => (
+                            <span key={pr} style={{ fontSize: '10px', background: '#f3f4f6', padding: '2px 5px', borderRadius: '3px' }}>
+                              {pr}
+                            </span>
+                          )).concat(privs.length > 4 ? [<span key='more' style={{ fontSize: '10px', opacity: 0.6 }}>+{privs.length - 4} more</span>] : [])
+                        ) : (
+                          <span style={{ fontSize: '11px', opacity: 0.5 }}>None</span>
+                        )}
+                      </div>
+                    </td>
+                    <td><StatusBadge status={admin.status} /></td>
+                    <td>{new Date(admin.registeredAt).toLocaleDateString()}</td>
+                    <td>
+                      <div className='button-row compact'>
+                        <button
+                          className='secondary-button'
+                          type='button'
+                          style={{ padding: '3px 8px', fontSize: '11px' }}
+                          onClick={() => {
+                            setEditingAdmin(admin);
+                            setEditIsSuperAdmin(Boolean(admin.isSuperAdmin));
+                            setEditPrivileges(
+                              admin.isSuperAdmin ? ALL_PRIVILEGES_LIST.map((p) => p.key) : privs
+                            );
+                          }}
+                        >
+                          Privileges
+                        </button>
+
+                        {admin.status === 'ACTIVE' ? (
+                          <button
+                            className='secondary-button'
+                            type='button'
+                            style={{
+                              padding: '3px 8px',
+                              fontSize: '11px',
+                              color: isSelf ? '#9ca3af' : '#dc2626',
+                              borderColor: isSelf ? '#e5e7eb' : '#fca5a5',
+                            }}
+                            disabled={isSelf || busyAdminId === admin.id}
+                            title={isSelf ? 'You cannot deactivate your own account' : 'Deactivate admin'}
+                            onClick={() => {
+                              if (window.confirm(`Are you sure you want to deactivate administrator ${admin.fullName}? All active sessions will be revoked.`)) {
+                                toggleAdminStatus(admin, 'DEACTIVATED');
+                              }
+                            }}
+                          >
+                            {busyAdminId === admin.id ? '…' : 'Deactivate'}
+                          </button>
+                        ) : (
+                          <button
+                            className='secondary-button'
+                            type='button'
+                            style={{ padding: '3px 8px', fontSize: '11px', color: '#16a34a', borderColor: '#86efac' }}
+                            disabled={busyAdminId === admin.id}
+                            onClick={() => toggleAdminStatus(admin, 'ACTIVE')}
+                          >
+                            {busyAdminId === admin.id ? '…' : 'Reactivate'}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <Empty>No administrators found.</Empty>
+      )}
     </section>
   );
 }
@@ -1091,8 +2060,8 @@ function AdminProductsPage({ products, onUploadImage }) {
         </div>
       </div>
 
-      {error && <div className='alert alert-error' role='alert'>{error}</div>}
-      {notice && <div className='alert alert-success' role='status'>{notice}</div>}
+      {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
+      {notice && <SuccessToast message={notice} onDismiss={() => setNotice('')} />}
 
       <form onSubmit={handleSubmit} className='surface nested-surface form-stack'>
         <div className='profile-form-grid'>
@@ -1440,7 +2409,7 @@ function AdminRechargesPage() {
         onLimit={(value) => { setLimit(value); setPage(1); }}
         placeholder='Search customer, phone, sender or reference'
       />
-      {error && <div className='alert alert-error' role='alert'>{error}</div>}
+      {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
       {loading ? <p className='empty-state' role='status'>Loading recharge requests…</p> : items.length ? (
         <div className='table-wrap'>
           <table>
@@ -1627,8 +2596,8 @@ function AdminWithdrawalsPage() {
         onLimit={(value) => { setLimit(value); setPage(1); }}
         placeholder='Search customer, phone or payout account'
       />
-      {error && <div className='alert alert-error' role='alert'>{error}</div>}
-      {notice && <div className='alert alert-success' role='status'>{notice}</div>}
+      {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
+      {notice && <SuccessToast message={notice} onDismiss={() => setNotice('')} />}
       {loading ? <p className='empty-state' role='status'>Loading withdrawal requests…</p> : items.length ? (
         <div className='table-wrap'>
           <table>
@@ -1720,7 +2689,7 @@ function AdminAuditLogsPage() {
           <label className='field'><span>Rows per page</span><select value={limit} onChange={(event) => { setLimit(Number(event.target.value)); setPage(1); }}><option value={5}>5</option><option value={10}>10</option><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label>
         </div>
       </div>
-      {error && <div className='alert alert-error' role='alert'>{error}</div>}
+      {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
       {loading ? <p className='empty-state' role='status'>Loading audit events…</p> : result.items.length ? (
         <>
           <div className='table-wrap'>
@@ -2105,7 +3074,7 @@ function AdminWelcomePage({ support, onSave, onUploadImage, onError }) {
           <label className='field'><span>Example daily earnings (ETB)</span><input type='number' name='welcomeExampleDailyEarnings' min='0' max='100000000' step='0.01' defaultValue={support.welcomeExampleDailyEarnings ?? 72} required /></label>
         </div>
         <label className='field'><span>Example disclaimer</span><textarea name='welcomeDisclaimer' rows='3' defaultValue={support.welcomeDisclaimer ?? ''} maxLength='1000' required /></label>
-        <label className='field'><span>Illustration image URL (optional)</span><input type='url' name='welcomeImageUrl' value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} maxLength='500' placeholder='https://example.com/welcome-image.jpg' />
+        <label className='field'><span>Illustration image URL (optional)</span><input type='text' name='welcomeImageUrl' value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} maxLength='500' placeholder='https://example.com/welcome-image.jpg' />
           <span className='image-upload-control'><input type='file' accept='image/jpeg,image/png,image/webp' disabled={imageUploading} onChange={(event) => { handleImageUpload(event.target.files?.[0]); event.target.value = ''; }} /><small>{imageUploading ? 'Uploading image…' : 'Or choose a JPG, PNG, or WEBP image (up to 5 MB). Save the page to apply it.'}</small></span>
           {imageUrl && <img className='admin-product-image-preview' src={assetUrl(imageUrl)} alt={support.welcomeImageAlt || 'Welcome page illustration preview'} />}
         </label>
@@ -2184,8 +3153,8 @@ function AdminPublicLinksPage() {
       <p className='eyebrow'>PUBLIC LINKS</p>
       <h3>Manage public links</h3>
       <p className='form-subtitle'>These links are loaded from the backend and can be changed without code deployment.</p>
-      {error && <div className='alert alert-error' role='alert'>{error}</div>}
-      {notice && <div className='alert alert-success' role='status'>{notice}</div>}
+      {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
+      {notice && <SuccessToast message={notice} onDismiss={() => setNotice('')} />}
       <form className='form-stack' onSubmit={saveLinks}>
         {links.length ? links.map((link, index) => (
           <div key={`${link.name || 'link'}-${index}`} className='surface nested-surface form-stack'>
@@ -2216,7 +3185,7 @@ function AdminPublicLinksPage() {
   );
 }
 
-function AdminLoginScreen({ auth, setAuth, onSubmit, busy, error }) {
+function AdminLoginScreen({ auth, setAuth, onSubmit, busy, error, onDismissError }) {
   return (
     <main className='auth-page'>
       <section className='auth-intro'>
@@ -2234,7 +3203,7 @@ function AdminLoginScreen({ auth, setAuth, onSubmit, busy, error }) {
         <div className='auth-form-wrap'>
           <p className='eyebrow'>SIGN IN</p>
           <h2>Administrator login</h2>
-          {error && <div className='alert alert-error' role='alert'>{error}</div>}
+          {error && <ErrorToast message={error} onDismiss={onDismissError} />}
           <form onSubmit={onSubmit} className='form-stack'>
             <label className='field'><span>Phone number</span><input type='tel' value={auth.phoneNumber} onChange={(event) => setAuth({ ...auth, phoneNumber: event.target.value })} required /></label>
             <label className='field'><span>Password</span><input type='password' value={auth.password} onChange={(event) => setAuth({ ...auth, password: event.target.value })} required /></label>
@@ -2246,7 +3215,7 @@ function AdminLoginScreen({ auth, setAuth, onSubmit, busy, error }) {
   );
 }
 
-function ProtectedCustomerApp({ user, dashboard, support, products, team, members, referralInfo, referralsLoading, referralsError, methods, accounts, recharges, withdrawals, settings, busy, notice, customerSuccessAlert, onDismissCustomerAlert, error, setError, setNotice, onCopyReferral, onPurchase, onSubmitRecharge, onSubmitWithdrawal, onCustomerSuccess, onSaveAccount, onSignOut }) {
+function ProtectedCustomerApp({ user, dashboard, support, products, team, members, referralInfo, referralsLoading, referralsError, setReferralsError, methods, accounts, recharges, withdrawals, settings, busy, notice, customerSuccessAlert, onDismissCustomerAlert, error, setError, setNotice, onCopyReferral, onPurchase, onSubmitRecharge, onSubmitWithdrawal, onCustomerSuccess, onSaveAccount, onSignOut, onRefreshDashboard }) {
   const location = useLocation();
   const [navOpen, setNavOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -2293,7 +3262,7 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
       case '/products':
         return <Products items={products} busy={busy} onPurchase={onPurchase} />;
       case '/tasks':
-        return <TasksPage />;
+        return <TasksPage onCustomerSuccess={onCustomerSuccess} onRefreshDashboard={onRefreshDashboard} />;
       case '/purchases':
         return <PurchasesPage />;
       case '/recharge':
@@ -2309,7 +3278,7 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
       case '/withdraw/history':
         return <WithdrawHistoryPage />;
       case '/referrals':
-        return <Team summary={team} members={members} loading={referralsLoading} error={referralsError} code={dashboard?.referralCode ?? referralInfo?.referralCode} referralLink={referralInfo?.referralLink ?? (dashboard?.referralCode ? `${window.location.origin}/register?ref=${dashboard.referralCode}` : '')} rates={referralInfo?.rates ?? { A: 22, B: 2, C: 1 }} onCopyCode={onCopyReferral} onCopyLink={() => {
+        return <Team summary={team} members={members} loading={referralsLoading} error={referralsError} onDismissError={() => setReferralsError('')} code={dashboard?.referralCode ?? referralInfo?.referralCode} referralLink={referralInfo?.referralLink ?? (dashboard?.referralCode ? `${window.location.origin}/register?ref=${dashboard.referralCode}` : '')} rates={referralInfo?.rates ?? { A: 22, B: 2, C: 1 }} onCopyCode={onCopyReferral} onCopyLink={() => {
           const value = referralInfo?.referralLink ?? (dashboard?.referralCode ? `${window.location.origin}/register?ref=${dashboard.referralCode}` : '');
           navigator.clipboard?.writeText(value).catch(() => undefined);
           setNotice('Referral link copied.');
@@ -2356,7 +3325,7 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
         <div className='sidebar-heading'>
           <NavLink to='/dashboard' className='brand' end>
             <span className='brand-mark'>M</span>
-            <span>MKM<span className='brand-caption'>MEMBER PORTAL</span></span>
+            <span>MKM</span>
           </NavLink>
           <button className='workspace-menu-toggle' type='button' aria-expanded={navOpen} aria-controls='customer-navigation' aria-label={navOpen ? 'Close member navigation' : 'Open member navigation'} onClick={() => setNavOpen((open) => !open)}>
             {navOpen ? <X size={20} /> : <Menu size={20} />}
@@ -2375,7 +3344,6 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
           <span className='avatar'>{user?.fullName?.slice(0, 1).toUpperCase()}</span>
           <div className='user-chip'>
             <strong>{user?.fullName}</strong>
-            <small>{user?.role}</small>
           </div>
           <button className='sign-out-button' type='button' onClick={onSignOut}><LogOut size={16} /> Log out</button>
         </div>
@@ -2389,8 +3357,8 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
           <div className='topbar-right'><span className='status-dot' /> Account active</div>
         </header>
         <div className='content'>
-          {error && <div className='alert alert-error' role='alert'>{error}<button onClick={() => setError('')} aria-label='Dismiss'>×</button></div>}
-          {notice && <div className='alert alert-success' role='status'>{notice}<button onClick={() => setNotice('')} aria-label='Dismiss'>×</button></div>}
+          {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
+          {notice && <SuccessToast message={notice} onDismiss={() => setNotice('')} />}
           {renderPage()}
         </div>
       </main>
@@ -2428,7 +3396,7 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
   );
 }
 
-function AuthScreen({ auth, setAuth, mode, onSubmit, onSwitchMode, busy, error }) {
+function AuthScreen({ auth, setAuth, mode, onSubmit, onSwitchMode, busy, error, onDismissError }) {
   const registering = mode === 'register';
 
   return (
@@ -2450,7 +3418,7 @@ function AuthScreen({ auth, setAuth, mode, onSubmit, onSwitchMode, busy, error }
           <p className='eyebrow'>{registering ? 'CREATE YOUR ACCOUNT' : 'WELCOME BACK'}</p>
           <h2>{registering ? 'Join MKM' : 'Sign in'}</h2>
           <p className='form-subtitle'>{registering ? 'Your account starts here with a 70 ETB welcome bonus.' : 'Sign in with your Ethiopian phone number and password.'}</p>
-          {error && <div className='alert alert-error' role='alert'>{error}</div>}
+          {error && <ErrorToast message={error} onDismiss={onDismissError} />}
           <form onSubmit={onSubmit} className='form-stack'>
             {registering && (
               <label className='field'>
@@ -2818,7 +3786,7 @@ function PurchasesPage() {
   );
 }
 
-function Team({ summary, members, loading, error, code, referralLink, rates, onCopyCode, onCopyLink, onShare }) {
+function Team({ summary, members, loading, error, onDismissError, code, referralLink, rates, onCopyCode, onCopyLink, onShare }) {
   const safeRates = rates ?? { A: 22, B: 2, C: 1 };
   const safeMembers = Array.isArray(members) ? members : [];
   const levelCards = [
@@ -2852,7 +3820,7 @@ function Team({ summary, members, loading, error, code, referralLink, rates, onC
           <h2>Share & Earn</h2>
         </div>
         {loading && <p className='quiet-label' role='status'>Loading referral details…</p>}
-        {error && <div className='alert alert-error' role='alert'>{error}</div>}
+        {error && <ErrorToast message={error} onDismiss={onDismissError} />}
       </div>
 
       <section className='surface form-surface referral-share-box'>
@@ -3033,7 +4001,7 @@ function Recharge({ methods, history, busy, onSubmit, settings }) {
             ))}
           </div>
 
-          {localError && <div className='alert alert-error' role='alert'>{localError}</div>}
+          {localError && <ErrorToast message={localError} onDismiss={() => setLocalError('')} />}
 
           <div className='button-row' style={{ marginTop: '14px' }}>
             <button className='primary-button large-btn' type='button' disabled={busy || !selectedAmount} onClick={continueToPayment}>
@@ -3194,7 +4162,7 @@ function RechargePaymentPage({ methods, settings, onCustomerSuccess }) {
           </div>
         </div>
 
-        {formError && <div className='alert alert-error' role='alert'>{formError}</div>}
+        {formError && <ErrorToast message={formError} onDismiss={() => setFormError('')} />}
 
         <form className='form-stack' onSubmit={handleTransactionSubmit} encType='multipart/form-data'>
           <input type='hidden' name='amount' value={amount} />
@@ -3256,19 +4224,33 @@ function RechargeHistoryPage() {
   const [uploadingId, setUploadingId] = useState(null);
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState('ALL');
 
   const loadHistory = async () => {
+    setLoading(true);
+    setLoadError('');
     try {
       const data = await api('/recharges');
       setItems(data);
-    } catch {
-      setItems([]);
+    } catch (cause) {
+      setLoadError(cause.message || 'Unable to load recharge history.');
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
     loadHistory();
   }, []);
+
+  const filteredItems = items.filter((item) => {
+    const status = String(item.status).toUpperCase();
+    return statusFilter === 'ALL' || (statusFilter === 'PENDING'
+      ? ['PENDING', 'UNDER_REVIEW'].includes(status)
+      : status === statusFilter);
+  });
 
   const handleUploadProof = async (id, file) => {
     if (!file) return;
@@ -3292,7 +4274,7 @@ function RechargeHistoryPage() {
   };
 
   return (
-    <section className='surface table-surface'>
+    <section className='surface table-surface recharge-history-page'>
       <div className='surface-heading'>
         <div>
           <p className='eyebrow'>RECHARGE HISTORY</p>
@@ -3301,67 +4283,136 @@ function RechargeHistoryPage() {
         <Link className='secondary-button' to='/recharge'>+ New Recharge</Link>
       </div>
 
-      {feedback && <div className='alert alert-success' role='status'>{feedback}</div>}
-      {error && <div className='alert alert-error' role='alert'>{error}</div>}
+      {feedback && <SuccessToast message={feedback} onDismiss={() => setFeedback('')} />}
+      {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
 
-      {items.length ? (
-        <div className='table-wrap'>
-          <table>
-            <thead>
-              <tr>
-                <th>Amount</th>
-                <th>Method</th>
-                <th>Sender / Account</th>
-                <th>Reference</th>
-                <th>Status</th>
-                <th>Payment Proof</th>
-                <th>Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item) => {
-                const canUploadProof = ['PENDING', 'UNDER_REVIEW'].includes(item.status);
-                const hasProof = Boolean(item.proofStorageKey);
+      {loadError ? (
+        <div className='history-load-error' role='alert'>
+          <span className='history-load-error-icon' aria-hidden='true'>!</span>
+          <div>
+            <strong>History could not be loaded</strong>
+            <p>{loadError}</p>
+          </div>
+          <button className='secondary-button' type='button' onClick={loadHistory}>Try again</button>
+        </div>
+      ) : loading ? (
+        <div className='history-loading' role='status' aria-live='polite'>
+          <span className='history-loading-spinner' aria-hidden='true' />
+          <span>Loading your recharge history…</span>
+        </div>
+      ) : items.length ? (
+        <>
+          <div className='recharge-history-summary' aria-label='Recharge status summary'>
+            <div className='recharge-summary-card'>
+              <span>Total requests</span>
+              <strong>{items.length}</strong>
+              <small>All submitted recharges</small>
+            </div>
+            <div className='recharge-summary-card'>
+              <span>Waiting for review</span>
+              <strong>{items.filter((item) => ['PENDING', 'UNDER_REVIEW'].includes(String(item.status).toUpperCase())).length}</strong>
+              <small>Being processed by the team</small>
+            </div>
+            <div className='recharge-summary-card'>
+              <span>Approved</span>
+              <strong>{items.filter((item) => String(item.status).toUpperCase() === 'APPROVED').length}</strong>
+              <small>Added to your wallet</small>
+            </div>
+          </div>
+          <div className='recharge-history-tools'>
+            <div className='recharge-history-filters' role='group' aria-label='Filter recharge requests by status'>
+              {[
+                { value: 'ALL', label: 'All requests' },
+                { value: 'PENDING', label: 'In review' },
+                { value: 'APPROVED', label: 'Approved' },
+                { value: 'REJECTED', label: 'Rejected' },
+              ].map((filter) => {
+                const count = filter.value === 'ALL'
+                  ? items.length
+                  : items.filter((item) => {
+                    const status = String(item.status).toUpperCase();
+                    return filter.value === 'PENDING'
+                      ? ['PENDING', 'UNDER_REVIEW'].includes(status)
+                      : status === filter.value;
+                  }).length;
 
                 return (
-                  <tr key={item.id}>
-                    <td><strong>{money(item.amount)}</strong></td>
-                    <td>{item.paymentMethod}</td>
-                    <td>
-                      <div><strong>{item.senderName || '—'}</strong><small>{item.senderAccount || '—'}</small></div>
-                    </td>
-                    <td><code>{item.transactionReference}</code></td>
-                    <td>
-                      <span className={`history-status ${String(item.status).toLowerCase()}`}>
-                        {String(item.status).replaceAll('_', ' ')}
-                      </span>
-                    </td>
-                    <td>
-                      {hasProof ? (
-                        <span className='proof-badge verified'>✓ Proof attached</span>
-                      ) : (
-                        <span className='proof-badge missing'>Missing proof</span>
-                      )}
-                      {canUploadProof && (
-                        <label className='inline-upload-btn'>
-                          <input
-                            type='file'
-                            accept='image/jpeg,image/png,image/webp,application/pdf'
-                            disabled={uploadingId === item.id}
-                            onChange={(e) => handleUploadProof(item.id, e.target.files?.[0])}
-                            style={{ display: 'none' }}
-                          />
-                          <span>{uploadingId === item.id ? 'Uploading…' : hasProof ? 'Change proof' : 'Upload proof'}</span>
-                        </label>
-                      )}
-                    </td>
-                    <td>{new Date(item.createdAt).toLocaleDateString()}</td>
-                  </tr>
+                  <button
+                    key={filter.value}
+                    type='button'
+                    className={`recharge-filter-chip${statusFilter === filter.value ? ' active' : ''}`}
+                    aria-pressed={statusFilter === filter.value}
+                    onClick={() => setStatusFilter(filter.value)}
+                  >
+                    {filter.label}<span>{count}</span>
+                  </button>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
+            </div>
+            <span className='recharge-results-count'>
+              {filteredItems.length} shown
+            </span>
+          </div>
+          {filteredItems.length ? (
+            <div className='table-wrap'>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Amount</th>
+                    <th>Status</th>
+                    <th>Proof</th>
+                    <th>Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredItems.map((item) => {
+                    const status = String(item.status).toUpperCase();
+                    const canUploadProof = ['PENDING', 'UNDER_REVIEW'].includes(status);
+                    const hasProof = Boolean(item.proofStorageKey);
+
+                    return (
+                      <tr key={item.id}>
+                        <td><strong>{money(item.amount)}</strong></td>
+                        <td>
+                          <span className={`history-status ${status.toLowerCase().replace(/_/g, '-')}`}>
+                            {status.replaceAll('_', ' ')}
+                          </span>
+                        </td>
+                        <td>
+                          {hasProof ? (
+                            <span className='proof-badge verified'>✓ Proof attached</span>
+                          ) : (
+                            <span className='proof-badge missing'>Missing proof</span>
+                          )}
+                          {canUploadProof && (
+                            <label className='inline-upload-btn'>
+                              <input
+                                type='file'
+                                accept='image/jpeg,image/png,image/webp,application/pdf'
+                                disabled={uploadingId === item.id}
+                                onChange={(e) => handleUploadProof(item.id, e.target.files?.[0])}
+                                style={{ display: 'none' }}
+                              />
+                              <span>{uploadingId === item.id ? 'Uploading…' : hasProof ? 'Change proof' : 'Upload proof'}</span>
+                            </label>
+                          )}
+                        </td>
+                        <td>{new Date(item.createdAt).toLocaleDateString()}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className='recharge-filter-empty'>
+              <span aria-hidden='true'>✓</span>
+              <strong>No {statusFilter === 'PENDING' ? 'recharges in review' : statusFilter.toLowerCase() + ' recharges'} right now</strong>
+              <p>Choose another filter to see more of your recharge history.</p>
+              <button type='button' className='recharge-filter-reset' onClick={() => setStatusFilter('ALL')}>Show all requests</button>
+            </div>
+          )}
+        </>
       ) : <Empty>No recharge requests submitted yet.</Empty>}
     </section>
   );
@@ -3675,10 +4726,20 @@ function WithdrawHistoryPage() {
         <div className='table-wrap'>
           <table>
             <thead>
-              <tr><th>Amount</th><th>Account</th><th>Status</th><th>Requested</th></tr>
+              <tr><th>Amount</th><th>Status</th><th>Requested</th></tr>
             </thead>
             <tbody>
-              {items.map((item) => <tr key={item.id}><td>{money(item.amount)}</td><td>{item.accountNumberSnapshot}</td><td>{item.status}</td><td>{new Date(item.createdAt).toLocaleDateString()}</td></tr>)}
+              {items.map((item) => (
+                <tr key={item.id}>
+                  <td>{money(item.amount)}</td>
+                  <td>
+                    <span className={`history-status ${String(item.status).toLowerCase().replace(/_/g, '-')}`}>
+                      {String(item.status).replaceAll('_', ' ')}
+                    </span>
+                  </td>
+                  <td>{new Date(item.createdAt).toLocaleDateString()}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -3807,8 +4868,8 @@ function ProfilePage() {
     <section className='surface form-surface form-stack'>
       <p className='eyebrow'>PROFILE</p>
       <h2>Account details</h2>
-      {error && <div className='alert alert-error' role='alert'>{error}</div>}
-      {notice && <div className='alert alert-success' role='status'>{notice}</div>}
+      {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
+      {notice && <SuccessToast message={notice} onDismiss={() => setNotice('')} />}
       {profile ? (
         <>
           <form className='form-stack' onSubmit={saveProfile}>
@@ -3874,33 +4935,232 @@ function ProfilePage() {
   );
 }
 
-function TasksPage() {
+function formatUnlockTime(eligibleAt) {
+  if (!eligibleAt) return 'Upcoming';
+  const diffMs = new Date(eligibleAt) - new Date();
+  if (diffMs <= 0) return 'Ready';
+  const totalMinutes = Math.floor(diffMs / (1000 * 60));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    return `In ${days}d ${hours % 24}h`;
+  }
+  if (hours > 0) {
+    return `In ${hours}h ${minutes}m`;
+  }
+  return `In ${minutes}m`;
+}
+
+function TasksPage({ onCustomerSuccess, onRefreshDashboard }) {
   const [tasks, setTasks] = useState({ items: [], summary: {} });
-  useEffect(() => { api('/tasks').then(setTasks).catch(() => setTasks({ items: [], summary: {} })); }, []);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState('');
+  const [pageError, setPageError] = useState('');
+  const [selectedProduct, setSelectedProduct] = useState('ALL');
+  const [sortOrder, setSortOrder] = useState('asc');
+
+  const refresh = async () => {
+    setLoading(true);
+    setPageError('');
+    try {
+      setTasks(await api('/tasks'));
+    } catch (cause) {
+      setPageError(cause.message || 'Failed to load daily tasks.');
+      setTasks({ items: [], summary: {} });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { refresh(); }, []);
+
+  const claim = async (taskId) => {
+    setBusyId(taskId);
+    setPageError('');
+    try {
+      const result = await api(`/tasks/${taskId}/claim`, { method: 'POST', ...jsonBody({}) });
+      const amountMsg = result?.amount ? ` (${money(result.amount)})` : '';
+      onCustomerSuccess?.(`Daily reward${amountMsg} claimed successfully!`);
+      await Promise.allSettled([refresh(), onRefreshDashboard?.()]);
+    } catch (cause) {
+      setPageError(cause.message || 'Unable to claim daily reward.');
+      await refresh();
+    } finally {
+      setBusyId('');
+    }
+  };
+
+  // Group tasks by purchased product / purchase so each VIP displays its 30 days individually
+  const productGroups = useMemo(() => {
+    const map = new Map();
+    for (const item of (tasks.items || [])) {
+      const key = item.productPurchaseId || item.productName || 'vip';
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          purchaseId: item.productPurchaseId,
+          productName: item.productName || 'VIP Product',
+          items: [],
+        });
+      }
+      map.get(key).items.push(item);
+    }
+    const list = Array.from(map.values());
+    for (const group of list) {
+      group.items.sort((a, b) => {
+        const tA = new Date(a.businessDate).getTime();
+        const tB = new Date(b.businessDate).getTime();
+        return sortOrder === 'asc' ? tA - tB : tB - tA;
+      });
+      group.completedCount = group.items.filter((it) => it.status === 'COMPLETED').length;
+      group.totalDays = group.items.length;
+      group.dailyEarnings = group.items[0]?.calculatedAmount ?? '0.00';
+    }
+    return list;
+  }, [tasks.items, sortOrder]);
+
+  const activeGroups = selectedProduct === 'ALL'
+    ? productGroups
+    : productGroups.filter((g) => g.productName === selectedProduct || g.key === selectedProduct);
 
   return (
-    <section className='surface table-surface'>
-      <div className='surface-heading'>
-        <div>
-          <p className='eyebrow'>DAILY TASKS</p>
-          <h3>Activity progress</h3>
+    <div style={{ display: 'grid', gap: '20px' }}>
+      <section className='surface table-surface'>
+        <div className='surface-heading'>
+          <div>
+            <p className='eyebrow'>DAILY TASKS</p>
+            <h3>VIP Activity Progress</h3>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            {tasks.summary?.completedCount > 0 && (
+              <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 700, color: '#059669' }}>
+                ✓ {tasks.summary.completedCount} completed of {tasks.items?.length || tasks.summary.totalTasks} total
+              </p>
+            )}
+            <button
+              type='button'
+              className='secondary-button'
+              style={{ padding: '5px 12px', fontSize: '0.75rem', fontWeight: 700 }}
+              onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
+              title='Toggle chronological sort order'
+            >
+              {sortOrder === 'asc' ? 'Order: Day 1 → 30' : 'Order: Day 30 → 1'}
+            </button>
+          </div>
         </div>
-      </div>
-      {tasks.items?.length ? (
-        <div className='table-wrap'>
-          <table>
-            <thead>
-              <tr><th>Product</th><th>Business date</th><th>Base amount</th><th>Calculated amount</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-              {tasks.items.map((item) => (
-                <tr key={item.id}><td>{item.productName}</td><td>{new Date(item.businessDate).toLocaleDateString()}</td><td>{money(item.baseAmount)}</td><td>{money(item.calculatedAmount)}</td><td>{item.status}</td></tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : <Empty>No daily tasks yet.</Empty>}
-    </section>
+
+        {productGroups.length > 1 && (
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '4px 0 0' }}>
+            <button
+              type='button'
+              className={selectedProduct === 'ALL' ? 'primary-button' : 'secondary-button'}
+              style={{ padding: '6px 14px', fontSize: '0.85rem', fontWeight: 700 }}
+              onClick={() => setSelectedProduct('ALL')}
+            >
+              All VIPs ({productGroups.length})
+            </button>
+            {productGroups.map((group) => (
+              <button
+                key={group.key}
+                type='button'
+                className={selectedProduct === group.key || selectedProduct === group.productName ? 'primary-button' : 'secondary-button'}
+                style={{ padding: '6px 14px', fontSize: '0.85rem', fontWeight: 700 }}
+                onClick={() => setSelectedProduct(group.key)}
+              >
+                {group.productName} ({group.totalDays} Days)
+              </button>
+            ))}
+          </div>
+        )}
+
+        {pageError && <ErrorToast message={pageError} onDismiss={() => setPageError('')} />}
+      </section>
+
+      {loading ? (
+        <section className='surface table-surface'><p className='empty-state' role='status'>Loading tasks…</p></section>
+      ) : activeGroups.length ? (
+        activeGroups.map((group) => (
+          <section key={group.key} className='surface table-surface'>
+            <div className='surface-heading' style={{ borderBottom: '1px solid #e5e7eb', paddingBottom: '12px', marginBottom: '16px' }}>
+              <div>
+                <p className='eyebrow' style={{ color: '#059669', fontWeight: 700 }}>INDIVIDUAL VIP PLAN</p>
+                <h3 style={{ margin: 0 }}>{group.productName} — 30 Days Tasks</h3>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 700, color: '#111827' }}>
+                  Daily Reward: {money(group.dailyEarnings)}
+                </p>
+                <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: '#4b5563', fontWeight: 600 }}>
+                  {group.completedCount} of {group.totalDays} claimed
+                </p>
+              </div>
+            </div>
+
+            <div className='table-wrap'>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Day</th>
+                    <th>Business date</th>
+                    <th>Base amount</th>
+                    <th>Daily earnings</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {group.items.map((item, index) => {
+                    const dayNumber = sortOrder === 'asc' ? index + 1 : group.items.length - index;
+                    const eligible = item.eligibleAt ? new Date(item.eligibleAt) <= new Date() : false;
+                    const canClaim = item.status === 'WAITING' && eligible;
+                    return (
+                      <tr key={item.id}>
+                        <td>
+                          <span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '4px', background: '#f3f4f6', fontWeight: 700, fontSize: '0.8rem', color: '#1f2937' }}>
+                            Day {dayNumber}
+                          </span>
+                        </td>
+                        <td><strong>{new Date(item.businessDate).toLocaleDateString()}</strong></td>
+                        <td>{money(item.baseAmount)}</td>
+                        <td><strong>{money(item.calculatedAmount)}</strong></td>
+                        <td><StatusBadge status={item.status} /></td>
+                        <td>
+                          {canClaim ? (
+                            <button
+                              type='button'
+                              className='primary-button'
+                              style={{ padding: '6px 18px', fontSize: '0.85rem', fontWeight: 700, letterSpacing: '0.02em' }}
+                              disabled={Boolean(busyId)}
+                              onClick={() => claim(item.id)}
+                            >
+                              {busyId === item.id ? 'Claiming…' : 'Claim'}
+                            </button>
+                          ) : item.status === 'COMPLETED' ? (
+                            <strong style={{ color: '#16a34a', fontWeight: 700, fontSize: '0.85rem' }}>✓ Claimed</strong>
+                          ) : item.status === 'WAITING' ? (
+                            <strong
+                              style={{ fontSize: '0.85rem', fontWeight: 700, color: '#111827', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+                              title={`Unlocks at ${new Date(item.eligibleAt).toLocaleString()}`}
+                            >
+                              🔒 {formatUnlockTime(item.eligibleAt)}
+                            </strong>
+                          ) : item.status === 'NOT_ELIGIBLE' ? (
+                            <strong style={{ fontSize: '0.85rem', fontWeight: 700, color: '#9ca3af' }}>Expired</strong>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ))
+      ) : (
+        <section className='surface table-surface'><Empty>No daily tasks yet.</Empty></section>
+      )}
+    </div>
   );
 }
 
@@ -3944,7 +5204,7 @@ function RewardsPage({ onCustomerSuccess }) {
         </div>
       </div>
       <p className='customer-rewards-intro'>Only approved deposits count toward your milestones. Submitted claims remain pending until an administrator reviews them.</p>
-      {error && <div className='alert alert-error' role='alert'>{error}</div>}
+      {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
       <div className='metric-grid customer-reward-summary'>
         <Metric label='Approved qualifying deposits' value={money(rewards.items?.[0]?.qualifyingDeposits ?? 0)} />
         <Metric label='Available to claim' value={money(rewards.summary?.totalClaimable ?? 0)} />

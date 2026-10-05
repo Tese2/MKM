@@ -103,3 +103,9 @@ test('support settings provide configurable welcome page content with safe defau
   assert.equal(invalid.welcomeExamplePrice, 300);
   assert.equal(invalid.welcomeImageUrl, null);
 });
+
+test('support settings preserve validated uploaded welcome image paths', () => {
+  const path = '/uploads/123e4567-e89b-42d3-a456-426614174000.webp';
+  assert.equal(normalizeSupportSettings({ welcome_image_url: path }).welcomeImageUrl, path);
+  assert.equal(normalizeSupportSettings({ welcome_image_url: '/uploads/not-an-upload.webp' }).welcomeImageUrl, null);
+});

@@ -98,6 +98,14 @@ export function normalizeSupportSettings(raw = {}) {
     const number = Number(value);
     return Number.isFinite(number) && number >= 0 ? number : fallback;
   };
+  const normalizeWelcomeImageUrl = (value) => {
+    const resolved = typeof value === 'string' ? value.trim() : '';
+    if (/^\/uploads\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:jpg|png|webp)$/i.test(resolved)) {
+      return resolved;
+    }
+    if (resolved.startsWith('/')) return null;
+    return normalizeUrl(value);
+  };
   const customerSupportUrl = normalizeUrl(raw.customerSupportUrl ?? raw.customer_support_url ?? null);
   const officialGroupUrl = normalizeUrl(raw.officialGroupUrl ?? raw.official_group_url ?? null);
   const whatsappNumber = normalizeWhatsAppNumber(raw.whatsappNumber ?? raw.whatsapp_number ?? null);
@@ -135,7 +143,7 @@ export function normalizeSupportSettings(raw = {}) {
     welcomeExamplePrice: normalizeWelcomeNumber(raw.welcomeExamplePrice ?? raw.welcome_example_price, 300),
     welcomeExampleDailyEarnings: normalizeWelcomeNumber(raw.welcomeExampleDailyEarnings ?? raw.welcome_example_daily_earnings, 72),
     welcomeDisclaimer: raw.welcomeDisclaimer ?? raw.welcome_disclaimer ?? 'Illustrative example only. Actual product terms and earnings depend on the product details shown before purchase.',
-    welcomeImageUrl: normalizeUrl(raw.welcomeImageUrl ?? raw.welcome_image_url ?? null),
+    welcomeImageUrl: normalizeWelcomeImageUrl(raw.welcomeImageUrl ?? raw.welcome_image_url ?? null),
     welcomeImageAlt: raw.welcomeImageAlt ?? raw.welcome_image_alt ?? 'MKM welcome illustration with a rising plant and gift box',
     welcomeHomeButtonLabel: raw.welcomeHomeButtonLabel ?? raw.welcome_home_button_label ?? 'Go to Home',
     publicLinks: normalizePublicLinks(raw.publicLinks ?? raw.public_links ?? []),

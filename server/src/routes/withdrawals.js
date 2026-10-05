@@ -45,9 +45,22 @@ withdrawalsRouter.post('/', customerWithdrawalLimiter, async (request, response,
             const active = await client.query("SELECT id FROM withdrawals WHERE user_id = $1 AND status IN ('PENDING', 'PROCESSING') FOR UPDATE", [request.auth.userId]);
             if (active.rowCount)
                 throw Object.assign(new Error('You already have a pending withdrawal.'), { status: 409, code: 'WITHDRAWAL_PENDING' });
-            const recent = await client.query("SELECT 1 FROM withdrawals WHERE user_id = $1 AND created_at > now() - interval '24 hours' LIMIT 1", [request.auth.userId]);
-            if (recent.rowCount)
-                throw Object.assign(new Error('You can submit one withdrawal every 24 hours.'), { status: 429, code: 'WITHDRAWAL_COOLDOWN' });
+            const todayWithdrawal = await client.query(
+                `SELECT 1 FROM withdrawals
+                 WHERE user_id = $1
+                   AND created_at >= (
+                       date_trunc('day', now() AT TIME ZONE 'Africa/Addis_Ababa')
+                       AT TIME ZONE 'Africa/Addis_Ababa'
+                   )
+                   AND created_at < (
+                       (date_trunc('day', now() AT TIME ZONE 'Africa/Addis_Ababa') + interval '1 day')
+                       AT TIME ZONE 'Africa/Addis_Ababa'
+                   )
+                 LIMIT 1`,
+                [request.auth.userId],
+            );
+            if (todayWithdrawal.rowCount)
+                throw Object.assign(new Error('You can submit only one withdrawal per calendar day (Ethiopia time).'), { status: 429, code: 'WITHDRAWAL_COOLDOWN' });
             const productCheck = await client.query("SELECT 1 FROM product_purchases WHERE user_id = $1 AND status IN ('ACTIVE', 'COMPLETED') LIMIT 1", [request.auth.userId]);
             if (!productCheck.rowCount)
                 throw Object.assign(new Error('You must purchase at least one product before requesting a withdrawal.'), { status: 400, code: 'PRODUCT_PURCHASE_REQUIRED' });

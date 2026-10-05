@@ -10,6 +10,16 @@ import { requireAuth, sessionToken } from '../middleware/auth.js';
 export const authRouter = Router();
 const phoneSchema = z.string().regex(/^[97][0-9]{8}$/, 'Enter a valid 9-digit phone number starting with 9 or 7.');
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false, message: { success: false, message: 'Too many attempts. Try again later.', code: 'RATE_LIMITED' } });
+export function inactiveCustomerMessage(reason, status) {
+    const normalizedReason = typeof reason === 'string' ? reason.trim() : '';
+    const statusMessage = status === 'SUSPENDED' ? 'suspended' : 'deactivated';
+    return normalizedReason
+        ? `Your account has been ${statusMessage}. Reason: ${normalizedReason}`
+        : `Your account has been ${statusMessage} by an administrator. Please contact support for assistance.`;
+}
+export function isInactiveCustomer(user) {
+    return user?.role === 'CUSTOMER' && user.status !== 'ACTIVE';
+}
 export function normalizeReferralCode(value) {
     const source = String(value ?? '').trim();
     if (!source) return '';
@@ -90,8 +100,25 @@ authRouter.post('/login', authLimiter, async (request, response, next) => {
             return response.status(400).json({ success: false, message: 'Enter your phone number and password.', code: 'VALIDATION_ERROR' });
         const result = await pool.query("SELECT id, full_name, phone_number, referral_code, role, status, password_hash FROM users WHERE phone_number = $1", [parsed.data.phoneNumber]);
         const user = result.rows[0];
-        const valid = user && user.status === 'ACTIVE' && await argon2.verify(user.password_hash, parsed.data.password);
-        if (!valid)
+        const validPassword = user ? await argon2.verify(user.password_hash, parsed.data.password) : false;
+        if (!user || !validPassword)
+            return response.status(401).json({ success: false, message: 'Phone number or password is incorrect.', code: 'INVALID_CREDENTIALS' });
+        if (isInactiveCustomer(user)) {
+            const deactivation = await pool.query(
+                `SELECT new_value->>'reason' AS reason
+                 FROM audit_logs
+                 WHERE entity_type = 'user' AND entity_id = $1 AND action = 'CUSTOMER_DEACTIVATE'
+                 ORDER BY created_at DESC
+                 LIMIT 1`,
+                [user.id],
+            );
+            return response.status(403).json({
+                success: false,
+                message: inactiveCustomerMessage(deactivation.rows[0]?.reason, user.status),
+                code: 'ACCOUNT_DEACTIVATED',
+            });
+        }
+        if (user.status !== 'ACTIVE')
             return response.status(401).json({ success: false, message: 'Phone number or password is incorrect.', code: 'INVALID_CREDENTIALS' });
         const session = await pool.query("INSERT INTO auth_sessions(user_id, expires_at) VALUES ($1, now() + interval '7 days') RETURNING id", [user.id]);
         setSessionCookie(response, user.id, session.rows[0].id);

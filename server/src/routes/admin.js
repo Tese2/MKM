@@ -1,11 +1,14 @@
 import argon2 from 'argon2';
+import crypto from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
 import { normalizeAdminSettings } from '../lib/adminSettings.js';
 import { normalizePublicLinks } from '../lib/supportSettings.js';
 import { validateAccountNumber } from '../lib/bankValidation.js';
+import { ADMIN_PRIVILEGES, normalizePrivileges, hasPrivilege } from '../lib/adminPrivileges.js';
 import { inTransaction, pool } from '../db/pool.js';
-import { requireAdmin, requireAuth } from '../middleware/auth.js';
+import { requireAdmin, requireAdminPrivilege, requireAuth } from '../middleware/auth.js';
+import { createUserRateLimit } from '../middleware/userRateLimit.js';
 
 export const adminRouter = Router();
 adminRouter.use(requireAuth, requireAdmin);
@@ -34,10 +37,11 @@ adminRouter.get('/dashboard', async (_request, response, next) => {
   }
 });
 
-adminRouter.get('/customers', async (request, response, next) => {
+adminRouter.get('/customers', requireAdminPrivilege('CUSTOMER_VIEW'), async (request, response, next) => {
   try {
     const query = z.object({
       search: z.string().trim().max(80).optional(),
+      status: z.enum(['ACTIVE', 'SUSPENDED', 'DEACTIVATED']).optional(),
       page: z.coerce.number().int().min(1).default(1),
       limit: z.coerce.number().int().min(1).max(100).default(25),
     }).safeParse(request.query);
@@ -46,12 +50,16 @@ adminRouter.get('/customers', async (request, response, next) => {
       return response.status(400).json({ success: false, message: 'Invalid customer query.', code: 'VALIDATION_ERROR' });
     }
 
-    const { search, page, limit } = query.data;
+    const { search, status, page, limit } = query.data;
     const values = [];
     const clauses = [];
     if (search) {
       clauses.push(`(u.full_name ILIKE $${values.length + 1} OR u.phone_number::text ILIKE $${values.length + 1} OR u.referral_code ILIKE $${values.length + 1})`);
       values.push(`%${search}%`);
+    }
+    if (status) {
+      clauses.push(`u.status = $${values.length + 1}`);
+      values.push(status);
     }
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
     const offset = (page - 1) * limit;
@@ -90,6 +98,233 @@ adminRouter.get('/customers', async (request, response, next) => {
         pagination: { page, limit, total, pages: Math.ceil(total / limit) },
       },
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRouter.get('/customers/:id', requireAdminPrivilege('CUSTOMER_VIEW'), async (request, response, next) => {
+  try {
+    const parsedId = z.string().uuid().safeParse(request.params.id);
+    if (!parsedId.success) {
+      return response.status(400).json({ success: false, message: 'Invalid customer ID.', code: 'VALIDATION_ERROR' });
+    }
+    const [userRes, walletRes, rechargesRes, withdrawalsRes, purchasesRes, recentTxRes] = await Promise.all([
+      pool.query(`SELECT u.id, u.full_name AS "fullName", u.phone_number AS "phoneNumber", u.referral_code AS "referralCode",
+                         u.role, u.status, u.created_at AS "registeredAt",
+                         coalesce(wa.accounts, '[]'::json) AS "withdrawalAccounts"
+                  FROM users u
+                  LEFT JOIN LATERAL (
+                    SELECT json_agg(json_build_object(
+                      'id', a.id,
+                      'paymentMethodId', a.payment_method_id,
+                      'paymentProvider', coalesce(p.name, 'Other'),
+                      'accountHolderName', a.account_holder_name,
+                      'accountNumber', a.account_number,
+                      'phoneNumber', a.phone_number,
+                      'isDefault', a.is_default
+                    ) ORDER BY a.is_default DESC, a.created_at DESC) AS accounts
+                    FROM withdrawal_accounts a
+                    LEFT JOIN payment_methods p ON p.id = a.payment_method_id
+                    WHERE a.user_id = u.id
+                  ) wa ON true
+                  WHERE u.id = $1 AND u.role = 'CUSTOMER'`, [parsedId.data]),
+      pool.query(`SELECT available_balance::text AS "availableBalance",
+                         pending_balance::text AS "pendingBalance",
+                         locked_balance::text AS "lockedBalance"
+                  FROM wallets WHERE user_id = $1`, [parsedId.data]),
+      pool.query(`SELECT count(*)::int AS count,
+                         coalesce(sum(amount) FILTER (WHERE status = 'APPROVED'), 0)::text AS "approvedTotal",
+                         count(*) FILTER (WHERE status = 'PENDING')::int AS "pendingCount"
+                  FROM recharge_requests WHERE user_id = $1`, [parsedId.data]),
+      pool.query(`SELECT count(*)::int AS count,
+                         coalesce(sum(net_amount) FILTER (WHERE status = 'COMPLETED'), 0)::text AS "completedTotal",
+                         count(*) FILTER (WHERE status = 'PENDING')::int AS "pendingCount"
+                  FROM withdrawals WHERE user_id = $1`, [parsedId.data]),
+      pool.query(`SELECT count(*)::int AS count,
+                         count(*) FILTER (WHERE status = 'ACTIVE')::int AS "activeCount",
+                         coalesce(sum(amount), 0)::text AS "totalAmount"
+                  FROM product_purchases WHERE user_id = $1`, [parsedId.data]),
+      pool.query(`SELECT id, type, amount::text, direction, status, description, created_at AS "createdAt"
+                  FROM transactions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10`, [parsedId.data]),
+    ]);
+
+    if (!userRes.rowCount) {
+      return response.status(404).json({ success: false, message: 'Customer not found.', code: 'NOT_FOUND' });
+    }
+
+    const customer = userRes.rows[0];
+    const wallet = walletRes.rows[0] ?? { availableBalance: '0.00', pendingBalance: '0.00', lockedBalance: '0.00' };
+    const recharges = rechargesRes.rows[0] ?? { count: 0, approvedTotal: '0.00', pendingCount: 0 };
+    const withdrawals = withdrawalsRes.rows[0] ?? { count: 0, completedTotal: '0.00', pendingCount: 0 };
+    const purchases = purchasesRes.rows[0] ?? { count: 0, activeCount: 0, totalAmount: '0.00' };
+
+    response.json({
+      success: true,
+      data: {
+        ...customer,
+        phoneNumber: String(customer.phoneNumber ?? '').trim(),
+        wallet,
+        recharges,
+        withdrawals,
+        purchases,
+        recentTransactions: recentTxRes.rows,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const customerStatusSchema = z.object({
+  status: z.enum(['ACTIVE', 'SUSPENDED', 'DEACTIVATED']),
+  reason: z.string().trim().max(500).optional(),
+  adminPassword: z.string().min(1).max(128).optional(),
+});
+
+adminRouter.patch('/customers/:id/status', requireAdminPrivilege('CUSTOMER_MANAGE'), async (request, response, next) => {
+  try {
+    const parsedId = z.string().uuid().safeParse(request.params.id);
+    const parsedBody = customerStatusSchema.safeParse(request.body);
+    if (!parsedId.success || !parsedBody.success) {
+      return response.status(400).json({
+        success: false,
+        message: parsedBody.success ? 'Invalid customer ID.' : parsedBody.error.issues[0]?.message ?? 'Invalid status payload.',
+        code: 'VALIDATION_ERROR',
+      });
+    }
+
+    const { status: targetStatus, reason, adminPassword } = parsedBody.data;
+
+    if (parsedId.data === request.auth.userId) {
+      return response.status(400).json({
+        success: false,
+        message: 'You cannot deactivate your own administrative account.',
+        code: 'CANNOT_DEACTIVATE_SELF',
+      });
+    }
+
+    const result = await inTransaction(async (client) => {
+      if (adminPassword) {
+        const adminRes = await client.query("SELECT password_hash FROM users WHERE id = $1 AND role = 'ADMIN' AND status = 'ACTIVE' FOR UPDATE", [request.auth.userId]);
+        if (!adminRes.rowCount || !await argon2.verify(adminRes.rows[0].password_hash, adminPassword)) {
+          throw Object.assign(new Error('Admin password is incorrect.'), { status: 403, code: 'INVALID_ADMIN_PASSWORD' });
+        }
+      }
+
+      const existingRes = await client.query("SELECT id, full_name, phone_number, role, status FROM users WHERE id = $1 FOR UPDATE", [parsedId.data]);
+      if (!existingRes.rowCount) {
+        throw Object.assign(new Error('Customer not found.'), { status: 404, code: 'NOT_FOUND' });
+      }
+
+      const customer = existingRes.rows[0];
+      if (customer.role !== 'CUSTOMER') {
+        throw Object.assign(new Error('Only customer accounts can be modified through this action.'), { status: 403, code: 'NOT_A_CUSTOMER' });
+      }
+
+      if (customer.status === targetStatus) {
+        throw Object.assign(new Error(`Customer is already ${targetStatus.toLowerCase()}.`), { status: 409, code: 'CUSTOMER_ALREADY_IN_STATUS' });
+      }
+
+      await client.query("UPDATE users SET status = $1, updated_at = now() WHERE id = $2", [targetStatus, customer.id]);
+
+      let sessionsRevoked = 0;
+      if (targetStatus !== 'ACTIVE') {
+        const sessionRes = await client.query("UPDATE auth_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [customer.id]);
+        sessionsRevoked = sessionRes.rowCount;
+      }
+
+      const action = targetStatus === 'ACTIVE' ? 'CUSTOMER_REACTIVATE' : 'CUSTOMER_DEACTIVATE';
+      await client.query(
+        'INSERT INTO audit_logs(admin_id, action, entity_type, entity_id, old_value, new_value) VALUES ($1, $2, $3, $4, $5, $6)',
+        [
+          request.auth.userId,
+          action,
+          'user',
+          customer.id,
+          { status: customer.status },
+          { status: targetStatus, reason: reason || null, sessionsRevoked },
+        ],
+      );
+
+      return {
+        id: customer.id,
+        fullName: customer.full_name,
+        status: targetStatus,
+        sessionsRevoked,
+      };
+    });
+
+    response.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRouter.delete('/customers/:id', requireAdminPrivilege('CUSTOMER_MANAGE'), async (request, response, next) => {
+  try {
+    const parsedId = z.string().uuid().safeParse(request.params.id);
+    if (!parsedId.success) {
+      return response.status(400).json({ success: false, message: 'Invalid customer ID.', code: 'VALIDATION_ERROR' });
+    }
+
+    if (parsedId.data === request.auth.userId) {
+      return response.status(400).json({
+        success: false,
+        message: 'You cannot deactivate your own administrative account.',
+        code: 'CANNOT_DEACTIVATE_SELF',
+      });
+    }
+
+    const adminPassword = typeof request.body?.adminPassword === 'string' ? request.body.adminPassword : undefined;
+    const reason = typeof request.body?.reason === 'string' ? request.body.reason : 'Customer deactivated by admin';
+
+    const result = await inTransaction(async (client) => {
+      if (adminPassword) {
+        const adminRes = await client.query("SELECT password_hash FROM users WHERE id = $1 AND role = 'ADMIN' AND status = 'ACTIVE' FOR UPDATE", [request.auth.userId]);
+        if (!adminRes.rowCount || !await argon2.verify(adminRes.rows[0].password_hash, adminPassword)) {
+          throw Object.assign(new Error('Admin password is incorrect.'), { status: 403, code: 'INVALID_ADMIN_PASSWORD' });
+        }
+      }
+
+      const existingRes = await client.query("SELECT id, full_name, role, status FROM users WHERE id = $1 FOR UPDATE", [parsedId.data]);
+      if (!existingRes.rowCount) {
+        throw Object.assign(new Error('Customer not found.'), { status: 404, code: 'NOT_FOUND' });
+      }
+
+      const customer = existingRes.rows[0];
+      if (customer.role !== 'CUSTOMER') {
+        throw Object.assign(new Error('Only customer accounts can be deactivated through this action.'), { status: 403, code: 'NOT_A_CUSTOMER' });
+      }
+
+      if (customer.status === 'DEACTIVATED') {
+        throw Object.assign(new Error('Customer is already deactivated.'), { status: 409, code: 'CUSTOMER_ALREADY_IN_STATUS' });
+      }
+
+      await client.query("UPDATE users SET status = 'DEACTIVATED', updated_at = now() WHERE id = $1", [customer.id]);
+      const sessionRes = await client.query("UPDATE auth_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [customer.id]);
+
+      await client.query(
+        'INSERT INTO audit_logs(admin_id, action, entity_type, entity_id, old_value, new_value) VALUES ($1, $2, $3, $4, $5, $6)',
+        [
+          request.auth.userId,
+          'CUSTOMER_DEACTIVATE',
+          'user',
+          customer.id,
+          { status: customer.status },
+          { status: 'DEACTIVATED', reason, sessionsRevoked: sessionRes.rowCount },
+        ],
+      );
+
+      return {
+        id: customer.id,
+        fullName: customer.full_name,
+        status: 'DEACTIVATED',
+        sessionsRevoked: sessionRes.rowCount,
+      };
+    });
+
+    response.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }
@@ -621,6 +856,510 @@ adminRouter.put('/settings/links', async (request, response, next) => {
     );
 
     response.json({ success: true, data: { items: sanitized } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// ADMIN PROFILE MANAGEMENT
+// ---------------------------------------------------------------------------
+
+adminRouter.get('/profile', async (request, response, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, full_name AS "fullName", phone_number AS "phoneNumber",
+              referral_code AS "referralCode", role, status,
+              coalesce(is_super_admin, false) AS "isSuperAdmin",
+              coalesce(privileges, '[]'::jsonb) AS privileges,
+              created_at AS "registeredAt"
+       FROM users WHERE id = $1 AND role = 'ADMIN'`,
+      [request.auth.userId],
+    );
+    if (!result.rowCount) {
+      return response.status(404).json({ success: false, message: 'Admin profile not found.', code: 'NOT_FOUND' });
+    }
+    const admin = result.rows[0];
+    response.json({
+      success: true,
+      data: {
+        ...admin,
+        phoneNumber: String(admin.phoneNumber ?? '').trim(),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRouter.patch('/profile', async (request, response, next) => {
+  try {
+    const parsed = z.object({
+      fullName: z.string().trim().min(2).max(120),
+      phoneNumber: z.string().regex(/^[97][0-9]{8}$/, 'Enter a valid 9-digit Ethiopian phone number.').optional(),
+    }).safeParse(request.body);
+
+    if (!parsed.success) {
+      return response.status(400).json({
+        success: false,
+        message: parsed.error.issues[0]?.message ?? 'Invalid profile input.',
+        code: 'VALIDATION_ERROR',
+      });
+    }
+
+    const { fullName, phoneNumber } = parsed.data;
+
+    const updated = await inTransaction(async (client) => {
+      const existing = await client.query("SELECT full_name, phone_number FROM users WHERE id = $1 AND role = 'ADMIN' FOR UPDATE", [request.auth.userId]);
+      if (!existing.rowCount) {
+        throw Object.assign(new Error('Admin not found.'), { status: 404, code: 'NOT_FOUND' });
+      }
+
+      if (phoneNumber && phoneNumber !== String(existing.rows[0].phone_number).trim()) {
+        const phoneCheck = await client.query("SELECT 1 FROM users WHERE phone_number = $1 AND id <> $2", [phoneNumber, request.auth.userId]);
+        if (phoneCheck.rowCount) {
+          throw Object.assign(new Error('That phone number is already registered to another account.'), { status: 409, code: 'PHONE_NUMBER_IN_USE' });
+        }
+      }
+
+      const phoneToSet = phoneNumber || String(existing.rows[0].phone_number).trim();
+      const res = await client.query(
+        `UPDATE users SET full_name = $2, phone_number = $3, updated_at = now()
+         WHERE id = $1
+         RETURNING id, full_name AS "fullName", phone_number AS "phoneNumber", referral_code AS "referralCode",
+                   role, status, coalesce(is_super_admin, false) AS "isSuperAdmin", coalesce(privileges, '[]'::jsonb) AS privileges,
+                   created_at AS "registeredAt"`,
+        [request.auth.userId, fullName, phoneToSet],
+      );
+
+      await client.query(
+        'INSERT INTO audit_logs(admin_id, action, entity_type, entity_id, old_value, new_value) VALUES ($1, $2, $3, $4, $5, $6)',
+        [
+          request.auth.userId,
+          'ADMIN_PROFILE_UPDATE',
+          'user',
+          request.auth.userId,
+          { fullName: existing.rows[0].full_name, phoneNumber: String(existing.rows[0].phone_number).trim() },
+          { fullName, phoneNumber: phoneToSet },
+        ],
+      );
+
+      return res.rows[0];
+    });
+
+    response.json({
+      success: true,
+      data: {
+        ...updated,
+        phoneNumber: String(updated.phoneNumber ?? '').trim(),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const adminPasswordRateLimit = createUserRateLimit({ limit: 10 });
+adminRouter.patch('/profile/password', adminPasswordRateLimit, async (request, response, next) => {
+  try {
+    const parsed = z.object({
+      currentPassword: z.string().min(1).max(128),
+      newPassword: z.string().min(6).max(128),
+      confirmNewPassword: z.string().min(6).max(128),
+    }).refine((value) => value.newPassword === value.confirmNewPassword, {
+      path: ['confirmNewPassword'],
+      message: 'New passwords do not match.',
+    }).safeParse(request.body);
+
+    if (!parsed.success) {
+      return response.status(400).json({
+        success: false,
+        message: parsed.error.issues[0]?.message ?? 'Invalid password details.',
+        code: 'VALIDATION_ERROR',
+      });
+    }
+
+    await inTransaction(async (client) => {
+      const userRes = await client.query("SELECT password_hash FROM users WHERE id = $1 AND role = 'ADMIN' FOR UPDATE", [request.auth.userId]);
+      if (!userRes.rowCount) {
+        throw Object.assign(new Error('Admin not found.'), { status: 404, code: 'NOT_FOUND' });
+      }
+
+      const verified = await argon2.verify(userRes.rows[0].password_hash, parsed.data.currentPassword);
+      if (!verified) {
+        throw Object.assign(new Error('Current password is incorrect.'), { status: 400, code: 'INVALID_PASSWORD' });
+      }
+
+      const newHash = await argon2.hash(parsed.data.newPassword, { type: argon2.argon2id });
+      await client.query("UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2", [newHash, request.auth.userId]);
+      await client.query("UPDATE auth_sessions SET revoked_at = now() WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL", [request.auth.userId, request.auth.sessionId]);
+
+      await client.query(
+        'INSERT INTO audit_logs(admin_id, action, entity_type, entity_id, old_value, new_value) VALUES ($1, $2, $3, $4, $5, $6)',
+        [request.auth.userId, 'ADMIN_PASSWORD_CHANGE', 'user', request.auth.userId, null, { passwordChanged: true, otherSessionsRevoked: true }],
+      );
+    });
+
+    response.json({ success: true, data: { passwordChanged: true, otherSessionsRevoked: true } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// ADMIN USER & PRIVILEGE MANAGEMENT
+// ---------------------------------------------------------------------------
+
+const adminCreateSchema = z.object({
+  fullName: z.string().trim().min(2).max(120),
+  phoneNumber: z.string().regex(/^[97][0-9]{8}$/, 'Enter a valid 9-digit Ethiopian phone number.'),
+  password: z.string().min(6).max(128),
+  confirmPassword: z.string().min(6).max(128),
+  isSuperAdmin: z.boolean().default(false),
+  privileges: z.array(z.string()).default([]),
+}).refine((data) => data.password === data.confirmPassword, {
+  path: ['confirmPassword'],
+  message: 'Passwords do not match.',
+});
+
+adminRouter.get('/admins', requireAdminPrivilege('ADMIN_VIEW'), async (request, response, next) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, full_name AS "fullName", phone_number AS "phoneNumber",
+             role, status, coalesce(is_super_admin, false) AS "isSuperAdmin",
+             coalesce(privileges, '[]'::jsonb) AS privileges,
+             created_at AS "registeredAt"
+      FROM users
+      WHERE role = 'ADMIN'
+      ORDER BY is_super_admin DESC, created_at ASC
+    `);
+    response.json({
+      success: true,
+      data: result.rows.map((row) => ({
+        ...row,
+        phoneNumber: String(row.phoneNumber ?? '').trim(),
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRouter.post('/admins', requireAdminPrivilege('ADMIN_CREATE'), async (request, response, next) => {
+  try {
+    const parsed = adminCreateSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return response.status(400).json({
+        success: false,
+        message: parsed.error.issues[0]?.message ?? 'Invalid admin payload.',
+        code: 'VALIDATION_ERROR',
+      });
+    }
+
+    const { fullName, phoneNumber, password, isSuperAdmin, privileges } = parsed.data;
+
+    // Privilege escalation prevention
+    if (isSuperAdmin && !request.auth.isSuperAdmin) {
+      return response.status(403).json({
+        success: false,
+        message: 'Only a Super Administrator can create another Super Administrator.',
+        code: 'SUPER_ADMIN_REQUIRED',
+      });
+    }
+
+    const normalizedPrivs = normalizePrivileges(privileges);
+    if (!request.auth.isSuperAdmin) {
+      const allowedSet = new Set(request.auth.privileges ?? []);
+      for (const priv of normalizedPrivs) {
+        if (!allowedSet.has(priv) && !allowedSet.has('*')) {
+          return response.status(403).json({
+            success: false,
+            message: `You cannot grant privilege '${priv}' which you do not possess.`,
+            code: 'CANNOT_GRANT_UNOWNED_PRIVILEGE',
+          });
+        }
+      }
+    }
+
+    const newAdmin = await inTransaction(async (client) => {
+      const phoneCheck = await client.query('SELECT 1 FROM users WHERE phone_number = $1', [phoneNumber]);
+      if (phoneCheck.rowCount) {
+        throw Object.assign(new Error('That phone number is already registered.'), { status: 409, code: 'PHONE_NUMBER_IN_USE' });
+      }
+
+      const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+      const referralCode = 'ADM-' + crypto.randomBytes(4).toString('hex').toUpperCase();
+
+      const insertRes = await client.query(
+        `INSERT INTO users (full_name, phone_number, password_hash, referral_code, role, status, is_super_admin, privileges)
+         VALUES ($1, $2, $3, $4, 'ADMIN', 'ACTIVE', $5, $6::jsonb)
+         RETURNING id, full_name AS "fullName", phone_number AS "phoneNumber", role, status,
+                   is_super_admin AS "isSuperAdmin", privileges, created_at AS "registeredAt"`,
+        [fullName, phoneNumber, passwordHash, referralCode, isSuperAdmin, JSON.stringify(isSuperAdmin ? ['*'] : normalizedPrivs)],
+      );
+
+      const created = insertRes.rows[0];
+      await client.query('INSERT INTO wallets (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING', [created.id]);
+
+      await client.query(
+        'INSERT INTO audit_logs(admin_id, action, entity_type, entity_id, old_value, new_value) VALUES ($1, $2, $3, $4, $5, $6)',
+        [
+          request.auth.userId,
+          'ADMIN_CREATE',
+          'user',
+          created.id,
+          null,
+          { fullName, phoneNumber, role: 'ADMIN', isSuperAdmin, privileges: isSuperAdmin ? ['*'] : normalizedPrivs },
+        ],
+      );
+
+      return created;
+    });
+
+    response.status(201).json({
+      success: true,
+      data: {
+        ...newAdmin,
+        phoneNumber: String(newAdmin.phoneNumber ?? '').trim(),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRouter.patch('/admins/:id', requireAdminPrivilege('ADMIN_MANAGE'), async (request, response, next) => {
+  try {
+    const parsedId = z.string().uuid().safeParse(request.params.id);
+    if (!parsedId.success) {
+      return response.status(400).json({ success: false, message: 'Invalid admin ID.', code: 'VALIDATION_ERROR' });
+    }
+
+    const parsedBody = z.object({
+      fullName: z.string().trim().min(2).max(120).optional(),
+      phoneNumber: z.string().regex(/^[97][0-9]{8}$/, 'Enter a valid 9-digit Ethiopian phone number.').optional(),
+      status: z.enum(['ACTIVE', 'SUSPENDED', 'DEACTIVATED']).optional(),
+      isSuperAdmin: z.boolean().optional(),
+      privileges: z.array(z.string()).optional(),
+    }).safeParse(request.body);
+
+    if (!parsedBody.success) {
+      return response.status(400).json({
+        success: false,
+        message: parsedBody.error.issues[0]?.message ?? 'Invalid update payload.',
+        code: 'VALIDATION_ERROR',
+      });
+    }
+
+    const { fullName, phoneNumber, status: newStatus, isSuperAdmin, privileges } = parsedBody.data;
+
+    const updated = await inTransaction(async (client) => {
+      const existingRes = await client.query(
+        "SELECT id, full_name, phone_number, role, status, is_super_admin, privileges FROM users WHERE id = $1 AND role = 'ADMIN' FOR UPDATE",
+        [parsedId.data],
+      );
+      if (!existingRes.rowCount) {
+        throw Object.assign(new Error('Admin not found.'), { status: 404, code: 'NOT_FOUND' });
+      }
+      const target = existingRes.rows[0];
+
+      // Super admin protection: non-super admin cannot edit a super admin
+      if (target.is_super_admin && !request.auth.isSuperAdmin) {
+        throw Object.assign(new Error('Only a Super Administrator can modify another Super Administrator.'), {
+          status: 403,
+          code: 'CANNOT_MODIFY_SUPER_ADMIN',
+        });
+      }
+
+      // Cannot promote to super admin if not super admin
+      if (isSuperAdmin === true && !request.auth.isSuperAdmin) {
+        throw Object.assign(new Error('Only a Super Administrator can grant Super Administrator privileges.'), {
+          status: 403,
+          code: 'SUPER_ADMIN_REQUIRED',
+        });
+      }
+
+      // Self-modification safety
+      const isSelf = target.id === request.auth.userId;
+      if (isSelf) {
+        if (newStatus && newStatus !== 'ACTIVE') {
+          throw Object.assign(new Error('You cannot deactivate or suspend your own administrative account.'), {
+            status: 400,
+            code: 'CANNOT_DEACTIVATE_SELF',
+          });
+        }
+        if (isSuperAdmin === false && target.is_super_admin) {
+          throw Object.assign(new Error('You cannot remove your own Super Administrator status.'), {
+            status: 400,
+            code: 'CANNOT_DEMOTE_SELF',
+          });
+        }
+      }
+
+      // Last admin protection: check remaining active super admins or admin managers
+      if ((newStatus && newStatus !== 'ACTIVE') || (isSuperAdmin === false && target.is_super_admin)) {
+        const remainingCheck = await client.query(
+          `SELECT count(*)::int AS count FROM users
+           WHERE role = 'ADMIN' AND status = 'ACTIVE' AND id <> $1
+             AND (is_super_admin = true OR privileges ? 'ADMIN_MANAGE' OR privileges ? '*')`,
+          [target.id],
+        );
+        if (remainingCheck.rows[0].count === 0) {
+          throw Object.assign(new Error('Cannot deactivate or remove privileges from the last active administrator with management rights.'), {
+            status: 400,
+            code: 'LAST_ADMIN_PROTECTION',
+          });
+        }
+      }
+
+      // Check privileges being granted
+      let normalizedPrivs = undefined;
+      if (privileges !== undefined) {
+        normalizedPrivs = normalizePrivileges(privileges);
+        if (!request.auth.isSuperAdmin) {
+          const allowedSet = new Set(request.auth.privileges ?? []);
+          for (const priv of normalizedPrivs) {
+            if (!allowedSet.has(priv) && !allowedSet.has('*')) {
+              throw Object.assign(new Error(`You cannot grant privilege '${priv}' which you do not possess.`), {
+                status: 403,
+                code: 'CANNOT_GRANT_UNOWNED_PRIVILEGE',
+              });
+            }
+          }
+        }
+      }
+
+      // Phone uniqueness check
+      if (phoneNumber && phoneNumber !== String(target.phone_number).trim()) {
+        const phoneCheck = await client.query('SELECT 1 FROM users WHERE phone_number = $1 AND id <> $2', [phoneNumber, target.id]);
+        if (phoneCheck.rowCount) {
+          throw Object.assign(new Error('That phone number is already in use.'), { status: 409, code: 'PHONE_NUMBER_IN_USE' });
+        }
+      }
+
+      const nextName = fullName ?? target.full_name;
+      const nextPhone = phoneNumber ?? String(target.phone_number).trim();
+      const nextStatus = newStatus ?? target.status;
+      const nextSuper = isSuperAdmin ?? target.is_super_admin;
+      const nextPrivs = nextSuper ? ['*'] : (normalizedPrivs ?? target.privileges);
+
+      const updateRes = await client.query(
+        `UPDATE users
+         SET full_name = $2, phone_number = $3, status = $4, is_super_admin = $5, privileges = $6::jsonb, updated_at = now()
+         WHERE id = $1
+         RETURNING id, full_name AS "fullName", phone_number AS "phoneNumber", role, status,
+                   is_super_admin AS "isSuperAdmin", privileges, created_at AS "registeredAt"`,
+        [target.id, nextName, nextPhone, nextStatus, nextSuper, JSON.stringify(nextPrivs)],
+      );
+
+      // If status became inactive, revoke sessions
+      let sessionsRevoked = 0;
+      if (nextStatus !== 'ACTIVE') {
+        const sessionRes = await client.query('UPDATE auth_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [target.id]);
+        sessionsRevoked = sessionRes.rowCount;
+      }
+
+      await client.query(
+        'INSERT INTO audit_logs(admin_id, action, entity_type, entity_id, old_value, new_value) VALUES ($1, $2, $3, $4, $5, $6)',
+        [
+          request.auth.userId,
+          nextStatus !== 'ACTIVE' ? 'ADMIN_DEACTIVATE' : 'ADMIN_UPDATE',
+          'user',
+          target.id,
+          { fullName: target.full_name, phoneNumber: target.phone_number, status: target.status, isSuperAdmin: target.is_super_admin, privileges: target.privileges },
+          { fullName: nextName, phoneNumber: nextPhone, status: nextStatus, isSuperAdmin: nextSuper, privileges: nextPrivs, sessionsRevoked },
+        ],
+      );
+
+      return updateRes.rows[0];
+    });
+
+    response.json({
+      success: true,
+      data: {
+        ...updated,
+        phoneNumber: String(updated.phoneNumber ?? '').trim(),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRouter.delete('/admins/:id', requireAdminPrivilege('ADMIN_MANAGE'), async (request, response, next) => {
+  try {
+    const parsedId = z.string().uuid().safeParse(request.params.id);
+    if (!parsedId.success) {
+      return response.status(400).json({ success: false, message: 'Invalid admin ID.', code: 'VALIDATION_ERROR' });
+    }
+
+    if (parsedId.data === request.auth.userId) {
+      return response.status(400).json({
+        success: false,
+        message: 'You cannot deactivate your own administrative account.',
+        code: 'CANNOT_DEACTIVATE_SELF',
+      });
+    }
+
+    const updated = await inTransaction(async (client) => {
+      const existingRes = await client.query(
+        "SELECT id, full_name, phone_number, role, status, is_super_admin FROM users WHERE id = $1 AND role = 'ADMIN' FOR UPDATE",
+        [parsedId.data],
+      );
+      if (!existingRes.rowCount) {
+        throw Object.assign(new Error('Admin not found.'), { status: 404, code: 'NOT_FOUND' });
+      }
+      const target = existingRes.rows[0];
+
+      if (target.is_super_admin && !request.auth.isSuperAdmin) {
+        throw Object.assign(new Error('Only a Super Administrator can deactivate another Super Administrator.'), {
+          status: 403,
+          code: 'CANNOT_MODIFY_SUPER_ADMIN',
+        });
+      }
+
+      if (target.status === 'DEACTIVATED') {
+        throw Object.assign(new Error('Admin is already deactivated.'), { status: 409, code: 'ADMIN_ALREADY_DEACTIVATED' });
+      }
+
+      // Last admin check
+      const remainingCheck = await client.query(
+        `SELECT count(*)::int AS count FROM users
+         WHERE role = 'ADMIN' AND status = 'ACTIVE' AND id <> $1
+           AND (is_super_admin = true OR privileges ? 'ADMIN_MANAGE' OR privileges ? '*')`,
+        [target.id],
+      );
+      if (remainingCheck.rows[0].count === 0) {
+        throw Object.assign(new Error('Cannot deactivate the last active administrator with management rights.'), {
+          status: 400,
+          code: 'LAST_ADMIN_PROTECTION',
+        });
+      }
+
+      await client.query("UPDATE users SET status = 'DEACTIVATED', updated_at = now() WHERE id = $1", [target.id]);
+      const sessionRes = await client.query('UPDATE auth_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [target.id]);
+
+      await client.query(
+        'INSERT INTO audit_logs(admin_id, action, entity_type, entity_id, old_value, new_value) VALUES ($1, $2, $3, $4, $5, $6)',
+        [
+          request.auth.userId,
+          'ADMIN_DEACTIVATE',
+          'user',
+          target.id,
+          { status: target.status },
+          { status: 'DEACTIVATED', sessionsRevoked: sessionRes.rowCount },
+        ],
+      );
+
+      return {
+        id: target.id,
+        fullName: target.full_name,
+        status: 'DEACTIVATED',
+        sessionsRevoked: sessionRes.rowCount,
+      };
+    });
+
+    response.json({ success: true, data: updated });
   } catch (error) {
     next(error);
   }

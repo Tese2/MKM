@@ -5,6 +5,7 @@ import { requireAdmin, requireAuth } from '../middleware/auth.js';
 import { createUserRateLimit } from '../middleware/userRateLimit.js';
 import { getMilestoneRewardStatus, summarizeRewardData, summarizeTaskData } from '../lib/rewardMetrics.js';
 import { postWalletMovement } from '../services/wallet.js';
+import { claimDailyTask } from '../services/dailyTaskProcessor.js';
 
 export const transactionsRouter = Router();
 transactionsRouter.use(requireAuth);
@@ -99,15 +100,34 @@ tasksRouter.get('/', async (request, response, next) => {
     try {
         const result = await pool.query(`SELECT dtr.id, dtr.business_date AS "businessDate", dtr.status, dtr.calculated_amount::text AS "calculatedAmount",
             dtr.base_amount::text AS "baseAmount", dtr.configured_rate::text AS "configuredRate",
-            p.name AS "productName", count(*) OVER()::int AS "totalCount"
+            p.name AS "productName",
+            pp.id AS "productPurchaseId",
+            (pp.activated_at + ((dtr.business_date - pp.activated_at::date) + 1) * INTERVAL '24 hours') AS "eligibleAt",
+            count(*) OVER()::int AS "totalCount"
         FROM daily_task_records dtr
         INNER JOIN product_purchases pp ON pp.id = dtr.product_purchase_id
         INNER JOIN products p ON p.id = pp.product_id
         WHERE dtr.user_id = $1
-        ORDER BY dtr.business_date DESC, dtr.created_at DESC LIMIT 30`, [request.auth.userId]);
+        ORDER BY dtr.business_date DESC, p.name ASC, dtr.created_at DESC`, [request.auth.userId]);
 
         const items = result.rows.map(({ totalCount, ...item }) => item);
         response.json({ success: true, data: { items, summary: summarizeTaskData(items) } });
+    }
+    catch (error) { next(error); }
+});
+
+const taskClaimLimiter = createUserRateLimit({ limit: 30 });
+tasksRouter.post('/:taskId/claim', taskClaimLimiter, async (request, response, next) => {
+    try {
+        const taskId = z.string().uuid().safeParse(request.params.taskId);
+        if (!taskId.success)
+            return response.status(400).json({ success: false, message: 'Invalid task.', code: 'VALIDATION_ERROR' });
+
+        const result = await inTransaction((client) =>
+            claimDailyTask(client, { taskId: taskId.data, userId: request.auth.userId }),
+        );
+
+        response.json({ success: true, data: result });
     }
     catch (error) { next(error); }
 });
