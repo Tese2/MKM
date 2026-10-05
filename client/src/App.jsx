@@ -3357,6 +3357,7 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
     if (currentPath === '/notifications') return 'Notifications';
     if (currentPath === '/profile') return 'Profile';
     if (currentPath === '/support') return 'Support';
+    if (currentPath === '/download') return 'Download App';
     return 'Member portal';
   })();
 
@@ -3421,6 +3422,8 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
         return <ProfilePage />;
       case '/support':
         return <SupportPage />;
+      case '/download':
+        return <CustomerDownloadPage support={support} />;
       default:
         return <Navigate to='/dashboard' replace />;
     }
@@ -3691,7 +3694,7 @@ function Overview({ data, support, onCopy }) {
     { label: support?.customerSupportLabel || 'Customer Support', to: supportDestination, icon: ShieldCheck, external: Boolean(support?.customerSupportEnabled && support?.customerSupportUrl) },
     { label: support?.officialGroupLabel || 'Official Group', to: support?.officialGroupEnabled ? (support.officialGroupUrl || '/support') : '/support', icon: Users, external: Boolean(support?.officialGroupEnabled && support?.officialGroupUrl) },
     { label: 'WhatsApp Support', to: support?.whatsappEnabled ? (support.whatsappUrl || '/support') : '/support', icon: MessageCircle, external: Boolean(support?.whatsappEnabled && support?.whatsappUrl) },
-    { label: 'Download App', to: support?.appDownloadUrl || '/support', icon: ArrowDownToLine, external: Boolean(support?.appDownloadUrl) },
+    { label: 'Download App', to: support?.appDownloadUrl && support.appDownloadUrl.startsWith('http') ? support.appDownloadUrl : '/download', icon: ArrowDownToLine, external: Boolean(support?.appDownloadUrl && support.appDownloadUrl.startsWith('http')) },
   ];
 
   return (
@@ -5365,6 +5368,74 @@ function RewardsPage({ onCustomerSuccess }) {
           })}
         </div>
       ) : <Empty>No reward milestones are configured yet.</Empty>}
+    </section>
+  );
+}
+
+function CustomerDownloadPage({ support }) {
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+
+  useEffect(() => {
+    const handler = (event) => {
+      event.preventDefault();
+      setDeferredPrompt(event);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    window.addEventListener('appinstalled', () => setIsInstalled(true));
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handler);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') setDeferredPrompt(null);
+    }
+  };
+
+  const downloadUrl = support?.appDownloadUrl;
+
+  return (
+    <section className='surface form-surface form-stack'>
+      <p className='eyebrow'>MKM MOBILE APP</p>
+      <h2>Download & Install MKM</h2>
+      <p>Get instant access to your account, daily tasks, wallet, and notifications directly on your mobile device.</p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', margin: '14px 0' }}>
+        {downloadUrl && (
+          <a
+            className='primary-button'
+            href={downloadUrl}
+            target='_blank'
+            rel='noreferrer'
+            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '14px 20px', fontSize: '15px' }}
+          >
+            <ArrowDownToLine size={18} /> Download Official MKM APK
+          </a>
+        )}
+
+        {deferredPrompt && !isInstalled && (
+          <button
+            type='button'
+            className='primary-button'
+            onClick={handleInstallClick}
+            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '14px 20px', fontSize: '15px' }}
+          >
+            <ArrowDownToLine size={18} /> Install Web App on this Device
+          </button>
+        )}
+
+        <div style={{ padding: '16px', borderRadius: '8px', background: 'rgba(23, 61, 49, 0.05)', border: '1px solid rgba(23, 61, 49, 0.15)' }}>
+          <h4 style={{ marginBottom: '8px', color: '#173d31' }}>📱 Fast install without download:</h4>
+          <ol style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '14px' }}>
+            <li><strong>Android (Chrome):</strong> Tap the browser menu (⋮) → select <strong>"Install app"</strong> or <strong>"Add to Home screen"</strong>.</li>
+            <li><strong>iPhone / iPad (Safari):</strong> Tap the Share icon (⎋) → select <strong>"Add to Home Screen"</strong>.</li>
+          </ol>
+        </div>
+      </div>
     </section>
   );
 }
