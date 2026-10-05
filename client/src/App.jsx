@@ -204,12 +204,13 @@ function AppRoutes() {
         : { ...auth, referralCode: auth.referralCode || undefined };
       validateAuthInput(mode, payload);
       const path = mode === 'login' ? '/auth/login' : '/auth/register';
-      const result = await api(path, { method: 'POST', ...jsonBody(payload) });
-      setUser(result);
-      if (result.role === 'CUSTOMER') {
+      await api(path, { method: 'POST', ...jsonBody(payload) });
+      const me = await api('/auth/me');
+      setUser(me);
+      if (me.role === 'CUSTOMER') {
         showCustomerSuccess(mode === 'register' ? 'Your account was created successfully.' : 'You signed in successfully.');
       }
-      navigate(result.role === 'ADMIN' ? '/admin/dashboard' : '/welcome', { replace: true });
+      navigate(me.role === 'ADMIN' ? '/admin' : '/dashboard', { replace: true });
     } catch (cause) {
       setError(cause.message);
     } finally {
@@ -219,6 +220,7 @@ function AppRoutes() {
 
   async function signOut() {
     setError('');
+    const wasAdmin = user?.role === 'ADMIN';
     try {
       await api('/auth/logout', { method: 'POST' });
     } catch (cause) {
@@ -240,7 +242,7 @@ function AppRoutes() {
     setNotice('');
     dismissCustomerSuccess();
     setError('');
-    navigate('/login', { replace: true });
+    navigate(wasAdmin ? '/admin/login' : '/login', { replace: true });
   }
 
   async function submitAdminAuth(event) {
@@ -248,17 +250,23 @@ function AppRoutes() {
     setBusy(true);
     setError('');
     try {
+      const normalizedPhone = auth.phoneNumber.trim().replace(/^(\+251|251|0)/, '');
       const payload = {
-        phoneNumber: auth.phoneNumber,
+        phoneNumber: normalizedPhone,
         password: auth.password,
       };
       validateAuthInput('login', payload);
-      const result = await api('/auth/login', { method: 'POST', ...jsonBody(payload) });
-      if (result.role !== 'ADMIN') {
-        throw new Error('Administrator access is required.');
+      await api('/auth/login', { method: 'POST', ...jsonBody(payload) });
+      const me = await api('/auth/me');
+      if (me.role !== 'ADMIN') {
+        try {
+          await api('/auth/logout', { method: 'POST' });
+        } catch {}
+        setUser(null);
+        throw new Error('Access denied. Administrator privileges are required.');
       }
-      setUser(result);
-      navigate('/admin/dashboard', { replace: true });
+      setUser(me);
+      navigate('/admin', { replace: true });
     } catch (cause) {
       setError(cause.message);
     } finally {
@@ -436,7 +444,7 @@ function AppRoutes() {
 
   useEffect(() => {
     if (user && (location.pathname === '/login' || location.pathname === '/register')) {
-      navigate(user.role === 'ADMIN' ? '/admin/dashboard' : '/welcome', { replace: true });
+      navigate(user.role === 'ADMIN' ? '/admin' : '/dashboard', { replace: true });
     }
   }, [user, location.pathname, navigate]);
 
@@ -463,11 +471,12 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route path='/' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin/dashboard' : '/dashboard'} replace /> : <PublicWebsite user={null} onPurchase={purchase} busy={busy} />} />
-      <Route path='/login' element={<AuthScreen auth={auth} setAuth={setAuth} mode='login' onSubmit={submitAuth} onSwitchMode={() => navigate(`/register${location.search}`)} busy={busy} error={error} onDismissError={() => setError('')} />} />
-      <Route path='/register' element={<AuthScreen auth={auth} setAuth={setAuth} mode='register' onSubmit={submitAuth} onSwitchMode={() => navigate('/login')} busy={busy} error={error} onDismissError={() => setError('')} />} />
-      <Route path='/admin/login' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin/dashboard' : '/dashboard'} replace /> : <AdminLoginScreen auth={auth} setAuth={setAuth} onSubmit={submitAdminAuth} busy={busy} error={error} onDismissError={() => setError('')} />} />
-      <Route path='/admin/*' element={user?.role === 'ADMIN' ? <ProtectedAdminApp user={user} onSignOut={signOut} busy={busy} notice={notice} error={error} setError={setError} setNotice={setNotice} /> : <Navigate to={user ? '/dashboard' : '/admin/login'} replace />} />
+      <Route path='/' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <PublicWebsite user={null} onPurchase={purchase} busy={busy} />} />
+      <Route path='/login' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <AuthScreen auth={auth} setAuth={setAuth} mode='login' onSubmit={submitAuth} onSwitchMode={() => navigate(`/register${location.search}`)} busy={busy} error={error} onDismissError={() => setError('')} />} />
+      <Route path='/register' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <AuthScreen auth={auth} setAuth={setAuth} mode='register' onSubmit={submitAuth} onSwitchMode={() => navigate('/login')} busy={busy} error={error} onDismissError={() => setError('')} />} />
+      <Route path='/admin/login' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <AdminLoginScreen auth={auth} setAuth={setAuth} onSubmit={submitAdminAuth} busy={busy} error={error} onDismissError={() => setError('')} />} />
+      <Route path='/admin' element={!user ? <Navigate to='/admin/login' replace /> : user.role === 'ADMIN' ? <ProtectedAdminApp user={user} onSignOut={signOut} busy={busy} notice={notice} error={error} setError={setError} setNotice={setNotice} /> : <AdminAccessDenied />} />
+      <Route path='/admin/*' element={!user ? <Navigate to='/admin/login' replace /> : user.role === 'ADMIN' ? <ProtectedAdminApp user={user} onSignOut={signOut} busy={busy} notice={notice} error={error} setError={setError} setNotice={setNotice} /> : <AdminAccessDenied />} />
       <Route path='/*' element={user ? <ProtectedCustomerApp user={user} dashboard={dashboard} support={support} products={products} team={team} members={members} referralInfo={referralInfo} referralsLoading={referralsLoading} referralsError={referralsError} setReferralsError={setReferralsError} methods={methods} accounts={accounts} recharges={recharges} withdrawals={withdrawals} settings={settings} busy={busy} notice={notice} customerSuccessAlert={customerSuccessAlert} onDismissCustomerAlert={dismissCustomerSuccess} error={error} setError={setError} setNotice={setNotice} onCopyReferral={() => {
         const code = dashboard?.referralCode ?? '';
         const referralLink = code ? `${window.location.origin}/register?ref=${encodeURIComponent(code)}` : '';
@@ -614,9 +623,10 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
     setMobileMenuOpen(false);
   }, [location.pathname]);
 
-  const currentPath = location.pathname || '/admin/dashboard';
+  const currentPath = location.pathname || '/admin';
+  const isDashboard = currentPath === '/admin' || currentPath === '/admin/dashboard';
   const adminNavItems = [
-    { to: '/admin/dashboard', label: 'Dashboard' },
+    { to: '/admin', label: 'Dashboard' },
     { to: '/admin/customers', label: 'Customers' },
     { to: '/admin/admins', label: 'Admin Management' },
     { to: '/admin/profile', label: 'My Profile' },
@@ -633,9 +643,9 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
     { to: '/admin/settings/links', label: 'Public Links' },
     { to: '/admin/password', label: 'Change Password' },
   ];
-  const currentTitle = adminNavItems.find(({ to }) => to === currentPath)?.label ?? 'Management dashboard';
+  const currentTitle = (adminNavItems.find(({ to }) => to === currentPath)?.label) ?? (isDashboard ? 'Dashboard' : 'Management dashboard');
   const renderAdminPage = () => {
-    if (currentPath === '/admin/dashboard') {
+    if (isDashboard) {
       return <AdminDashboardPage stats={stats} />;
     }
     if (currentPath === '/admin/customers') {
@@ -683,14 +693,14 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
     if (currentPath === '/admin/settings/links') {
       return <AdminPublicLinksPage />;
     }
-    return <Navigate to='/admin/dashboard' replace />;
+    return <Navigate to='/admin' replace />;
   };
 
   return (
     <div className='workspace admin-workspace'>
       <aside className='sidebar'>
         <div className='sidebar-heading'>
-          <NavLink to='/admin/dashboard' className='brand' end>
+          <NavLink to='/admin' className='brand' end>
             <span className='brand-mark'>A</span>
             <span>MKM Admin<span className='brand-caption'>ADMIN PANEL</span></span>
           </NavLink>
@@ -701,7 +711,7 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
         <p className='nav-label'>ADMIN</p>
         <nav id='admin-navigation' className={navOpen ? 'is-open' : ''} aria-label='Admin navigation'>
           {adminNavItems.map(({ to, label }) => (
-            <NavLink key={to} to={to} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} end={to === '/admin/dashboard'}>
+            <NavLink key={to} to={to} className={({ isActive }) => `nav-item ${isActive || (to === '/admin' && isDashboard) ? 'active' : ''}`} end={to === '/admin'}>
               {label}
             </NavLink>
           ))}
@@ -734,7 +744,7 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
             </div>
             <div className='customer-mobile-menu-grid'>
               {adminNavItems.map(({ to, label }) => (
-                <NavLink key={to} to={to} className={({ isActive }) => `customer-mobile-menu-link ${isActive ? 'active' : ''}`} end={to === '/admin/dashboard'}>
+                <NavLink key={to} to={to} className={({ isActive }) => `customer-mobile-menu-link ${isActive || (to === '/admin' && isDashboard) ? 'active' : ''}`} end={to === '/admin'}>
                   <span>{label}</span>
                 </NavLink>
               ))}
@@ -743,8 +753,8 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
           </div>
         )}
         <div className='customer-mobile-dock'>
-          {adminNavItems.filter(({ to }) => ['/admin/dashboard', '/admin/customers', '/admin/recharges', '/admin/withdrawals'].includes(to)).map(({ to, label }) => (
-            <NavLink key={to} to={to} className={({ isActive }) => `customer-mobile-dock-link ${isActive ? 'active' : ''}`} end={to === '/admin/dashboard'}>
+          {adminNavItems.filter(({ to }) => ['/admin', '/admin/customers', '/admin/recharges', '/admin/withdrawals'].includes(to)).map(({ to, label }) => (
+            <NavLink key={to} to={to} className={({ isActive }) => `customer-mobile-dock-link ${isActive || (to === '/admin' && isDashboard) ? 'active' : ''}`} end={to === '/admin'}>
               <span>{({ Dashboard: 'Home', Customers: 'Users', Recharges: 'Recharge', Withdrawals: 'Payouts' })[label] ?? label}</span>
             </NavLink>
           ))}
@@ -3185,35 +3195,99 @@ function AdminPublicLinksPage() {
   );
 }
 
-function AdminLoginScreen({ auth, setAuth, onSubmit, busy, error, onDismissError }) {
+function AdminAccessDenied() {
   return (
     <main className='auth-page'>
       <section className='auth-intro'>
-        <a className='brand auth-brand' href='/admin/login'>
+        <div className='brand auth-brand'>
           <span className='brand-mark'>A</span>
           <span>MKM Admin<span className='brand-caption'>ADMIN PANEL</span></span>
-        </a>
-        <div className='intro-copy'>
-          <p className='eyebrow'>PRIVATE ACCESS</p>
-          <h1>Admin portal</h1>
-          <p>Secure administrative controls for customers, payouts, products and support.</p>
         </div>
+        <div className='intro-copy'>
+          <p className='eyebrow'>ACCESS RESTRICTED</p>
+          <h1>Access Denied</h1>
+          <p>This portal is restricted to authorized administrators only.</p>
+        </div>
+        <div className='intro-foot'>RESTRICTED ACCESS <span>•</span> MKM {new Date().getFullYear()}</div>
       </section>
       <section className='auth-side'>
         <div className='auth-form-wrap'>
-          <p className='eyebrow'>SIGN IN</p>
-          <h2>Administrator login</h2>
-          {error && <ErrorToast message={error} onDismiss={onDismissError} />}
-          <form onSubmit={onSubmit} className='form-stack'>
-            <label className='field'><span>Phone number</span><input type='tel' value={auth.phoneNumber} onChange={(event) => setAuth({ ...auth, phoneNumber: event.target.value })} required /></label>
-            <label className='field'><span>Password</span><input type='password' value={auth.password} onChange={(event) => setAuth({ ...auth, password: event.target.value })} required /></label>
-            <button className='primary-button' disabled={busy}>{busy ? 'Please wait…' : 'Sign in'}<span>↗</span></button>
-          </form>
+          <p className='eyebrow'>NOT AUTHORIZED</p>
+          <h2>Administrator Access Required</h2>
+          <p className='form-subtitle'>Your account does not have administrator privileges. You cannot access admin pages.</p>
+          <div className='form-stack'>
+            <Link to='/dashboard' className='primary-button' style={{ textDecoration: 'none', display: 'flex', justifyContent: 'center' }}>
+              Return to Customer Dashboard ↗
+            </Link>
+          </div>
         </div>
       </section>
     </main>
   );
 }
+
+function AdminLoginScreen({ auth, setAuth, onSubmit, busy, error, onDismissError }) {
+  return (
+    <main className='auth-page'>
+      <section className='auth-intro'>
+        <Link className='brand auth-brand' to='/admin/login'>
+          <span className='brand-mark'>A</span>
+          <span>MKM Admin<span className='brand-caption'>ADMIN PANEL</span></span>
+        </Link>
+        <div className='intro-copy'>
+          <p className='eyebrow'>PRIVATE ACCESS</p>
+          <h1>Admin portal</h1>
+          <p>Secure administrative controls for customers, payouts, products and support.</p>
+        </div>
+        <div className='intro-foot'>SECURE ADMINISTRATOR ACCESS <span>•</span> MKM {new Date().getFullYear()}</div>
+      </section>
+      <section className='auth-side'>
+        <div className='auth-form-wrap'>
+          <p className='eyebrow'>ADMIN ACCESS</p>
+          <h2>Administrator login</h2>
+          <p className='form-subtitle'>Sign in with your administrator phone number and password.</p>
+          {error && <ErrorToast message={error} onDismiss={onDismissError} />}
+          <form onSubmit={onSubmit} className='form-stack'>
+            <label className='field'>
+              <span>Phone number *</span>
+              <div className='phone-input-group'>
+                <span className='phone-prefix-pill'>+251</span>
+                <input
+                  type='tel'
+                  inputMode='numeric'
+                  placeholder='912345678'
+                  value={auth.phoneNumber}
+                  onChange={(event) => setAuth({ ...auth, phoneNumber: event.target.value.replace(/\D/g, '').slice(0, 9) })}
+                  autoComplete='tel'
+                  required
+                />
+              </div>
+              <small>Enter your 9-digit administrator phone number.</small>
+            </label>
+            <label className='field'>
+              <span>Password *</span>
+              <input
+                type='password'
+                value={auth.password}
+                onChange={(event) => setAuth({ ...auth, password: event.target.value })}
+                placeholder='Enter your password'
+                autoComplete='current-password'
+                required
+              />
+            </label>
+            <button className='primary-button' disabled={busy}>{busy ? 'Please wait…' : 'Sign in to Admin'}<span>↗</span></button>
+          </form>
+          <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
+            <Link to='/login' style={{ color: 'var(--color-text-muted, #888)', fontSize: '0.875rem', textDecoration: 'none' }}>
+              ← Return to customer login
+            </Link>
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 
 function ProtectedCustomerApp({ user, dashboard, support, products, team, members, referralInfo, referralsLoading, referralsError, setReferralsError, methods, accounts, recharges, withdrawals, settings, busy, notice, customerSuccessAlert, onDismissCustomerAlert, error, setError, setNotice, onCopyReferral, onPurchase, onSubmitRecharge, onSubmitWithdrawal, onCustomerSuccess, onSaveAccount, onSignOut, onRefreshDashboard }) {
   const location = useLocation();

@@ -1,4 +1,8 @@
-const API_BASE = import.meta.env.VITE_API_URL ?? '';
+const API_BASE = (
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD ? 'https://mkm-n1ao.onrender.com' : '')
+).replace(/\/+$/, '');
 
 export function assetUrl(path) {
   return path?.startsWith('/') && API_BASE ? `${API_BASE}${path}` : path;
