@@ -206,11 +206,25 @@ function AppRoutes() {
       const path = mode === 'login' ? '/auth/login' : '/auth/register';
       await api(path, { method: 'POST', ...jsonBody(payload) });
       const me = await api('/auth/me');
+      if (me.role === 'ADMIN') {
+        try {
+          await api('/auth/logout', { method: 'POST' });
+        } catch {}
+        setUser(null);
+        throw new Error('Administrators must sign in through the Admin Portal at /admin/login.');
+      }
+      if (me.role !== 'CUSTOMER') {
+        try {
+          await api('/auth/logout', { method: 'POST' });
+        } catch {}
+        setUser(null);
+        throw new Error('Access denied. A customer account is required for this portal.');
+      }
       setUser(me);
       if (me.role === 'CUSTOMER') {
         showCustomerSuccess(mode === 'register' ? 'Your account was created successfully.' : 'You signed in successfully.');
       }
-      navigate(me.role === 'ADMIN' ? '/admin' : '/dashboard', { replace: true });
+      navigate('/dashboard', { replace: true });
     } catch (cause) {
       setError(cause.message);
     } finally {
@@ -263,7 +277,7 @@ function AppRoutes() {
           await api('/auth/logout', { method: 'POST' });
         } catch {}
         setUser(null);
-        throw new Error('Access denied. Administrator privileges are required.');
+        throw new Error('Access denied. Administrator privileges are required. Please use customer login at /login.');
       }
       setUser(me);
       navigate('/admin', { replace: true });
@@ -352,9 +366,10 @@ function AppRoutes() {
 
   useEffect(() => {
     if (!user) return;
-    loadDashboard().catch((cause) => setError(cause.message));
-    api('/support').then(setSupport).catch(() => setSupport(null));
-    if (user.role === 'ADMIN') {
+    if (user.role === 'CUSTOMER') {
+      loadDashboard().catch((cause) => setError(cause.message));
+      api('/support').then(setSupport).catch(() => setSupport(null));
+    } else if (user.role === 'ADMIN') {
       api('/admin/settings').then(setSettings).catch((cause) => setError(cause.message));
     }
   }, [user]);
@@ -443,13 +458,19 @@ function AppRoutes() {
   }, [user, location.pathname]);
 
   useEffect(() => {
-    if (user && (location.pathname === '/login' || location.pathname === '/register')) {
-      navigate(user.role === 'ADMIN' ? '/admin' : '/dashboard', { replace: true });
-    }
-  }, [user, location.pathname, navigate]);
-
-  useEffect(() => {
     if (authLoading) return;
+    if (user?.role === 'ADMIN') {
+      if (!location.pathname.startsWith('/admin')) {
+        navigate('/admin', { replace: true });
+      }
+      return;
+    }
+    if (user?.role === 'CUSTOMER') {
+      if (location.pathname === '/login' || location.pathname === '/register' || location.pathname === '/admin/login') {
+        navigate('/dashboard', { replace: true });
+        return;
+      }
+    }
     const publicPaths = ['/', '/about', '/products', '/support', '/download', '/forgot-password', '/terms', '/privacy'];
     const isPublicPath = publicPaths.includes(location.pathname) || location.pathname.startsWith('/products/');
     if (location.pathname.startsWith('/admin')) return;
@@ -474,10 +495,13 @@ function AppRoutes() {
       <Route path='/' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <PublicWebsite user={null} onPurchase={purchase} busy={busy} />} />
       <Route path='/login' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <AuthScreen auth={auth} setAuth={setAuth} mode='login' onSubmit={submitAuth} onSwitchMode={() => navigate(`/register${location.search}`)} busy={busy} error={error} onDismissError={() => setError('')} />} />
       <Route path='/register' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <AuthScreen auth={auth} setAuth={setAuth} mode='register' onSubmit={submitAuth} onSwitchMode={() => navigate('/login')} busy={busy} error={error} onDismissError={() => setError('')} />} />
-      <Route path='/admin/login' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <AdminLoginScreen auth={auth} setAuth={setAuth} onSubmit={submitAdminAuth} busy={busy} error={error} onDismissError={() => setError('')} />} />
+      <Route path='/admin/login' element={user ? (user.role === 'ADMIN' ? <Navigate to='/admin' replace /> : <Navigate to='/dashboard' replace />) : <AdminLoginScreen auth={auth} setAuth={setAuth} onSubmit={submitAdminAuth} busy={busy} error={error} onDismissError={() => setError('')} />} />
       <Route path='/admin' element={!user ? <Navigate to='/admin/login' replace /> : user.role === 'ADMIN' ? <ProtectedAdminApp user={user} onSignOut={signOut} busy={busy} notice={notice} error={error} setError={setError} setNotice={setNotice} /> : <AdminAccessDenied />} />
       <Route path='/admin/*' element={!user ? <Navigate to='/admin/login' replace /> : user.role === 'ADMIN' ? <ProtectedAdminApp user={user} onSignOut={signOut} busy={busy} notice={notice} error={error} setError={setError} setNotice={setNotice} /> : <AdminAccessDenied />} />
-      <Route path='/*' element={user ? <ProtectedCustomerApp user={user} dashboard={dashboard} support={support} products={products} team={team} members={members} referralInfo={referralInfo} referralsLoading={referralsLoading} referralsError={referralsError} setReferralsError={setReferralsError} methods={methods} accounts={accounts} recharges={recharges} withdrawals={withdrawals} settings={settings} busy={busy} notice={notice} customerSuccessAlert={customerSuccessAlert} onDismissCustomerAlert={dismissCustomerSuccess} error={error} setError={setError} setNotice={setNotice} onCopyReferral={() => {
+      <Route path='/*' element={
+        !user ? <PublicWebsite user={null} onPurchase={purchase} busy={busy} /> :
+        user.role === 'ADMIN' ? <Navigate to='/admin' replace /> :
+        <ProtectedCustomerApp user={user} dashboard={dashboard} support={support} products={products} team={team} members={members} referralInfo={referralInfo} referralsLoading={referralsLoading} referralsError={referralsError} setReferralsError={setReferralsError} methods={methods} accounts={accounts} recharges={recharges} withdrawals={withdrawals} settings={settings} busy={busy} notice={notice} customerSuccessAlert={customerSuccessAlert} onDismissCustomerAlert={dismissCustomerSuccess} error={error} setError={setError} setNotice={setNotice} onCopyReferral={() => {
         const code = dashboard?.referralCode ?? '';
         const referralLink = code ? `${window.location.origin}/register?ref=${encodeURIComponent(code)}` : '';
         navigator.clipboard?.writeText(referralLink).catch(() => undefined);
@@ -524,7 +548,8 @@ function AppRoutes() {
         } finally {
           setBusy(false);
         }
-      }} onSignOut={signOut} /> : <PublicWebsite user={null} onPurchase={purchase} busy={busy} />} />
+      }} onSignOut={signOut} />
+      } />
     </Routes>
   );
 }
@@ -3198,26 +3223,30 @@ function AdminPublicLinksPage() {
 function AdminAccessDenied() {
   return (
     <main className='auth-page'>
-      <section className='auth-intro'>
+      <section className='auth-intro' style={{ background: 'linear-gradient(145deg, #1a2421 0%, #1c1815 100%)' }}>
         <div className='brand auth-brand'>
-          <span className='brand-mark'>A</span>
-          <span>MKM Admin<span className='brand-caption'>ADMIN PANEL</span></span>
+          <span className='brand-mark' style={{ background: '#b91c1c' }}>!</span>
+          <span>MKM Admin<span className='brand-caption'>SECURITY BOUNDARY</span></span>
         </div>
         <div className='intro-copy'>
-          <p className='eyebrow'>ACCESS RESTRICTED</p>
+          <p className='eyebrow' style={{ color: '#f87171' }}>ACCESS RESTRICTED</p>
           <h1>Access Denied</h1>
-          <p>This portal is restricted to authorized administrators only.</p>
+          <p>This administrative portal is strictly reserved for authorized platform administrators.</p>
         </div>
         <div className='intro-foot'>RESTRICTED ACCESS <span>•</span> MKM {new Date().getFullYear()}</div>
       </section>
       <section className='auth-side'>
         <div className='auth-form-wrap'>
-          <p className='eyebrow'>NOT AUTHORIZED</p>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '999px', background: 'rgba(239, 68, 68, 0.1)', color: '#dc2626', fontSize: '12px', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: '16px' }}>
+            <CircleAlert size={15} />
+            <span>Restricted Area</span>
+          </div>
           <h2>Administrator Access Required</h2>
-          <p className='form-subtitle'>Your account does not have administrator privileges. You cannot access admin pages.</p>
-          <div className='form-stack'>
-            <Link to='/dashboard' className='primary-button' style={{ textDecoration: 'none', display: 'flex', justifyContent: 'center' }}>
-              Return to Customer Dashboard ↗
+          <p className='form-subtitle'>Your account does not have administrator privileges. Customer accounts cannot access or view management dashboards.</p>
+          <div className='form-stack' style={{ marginTop: '24px' }}>
+            <Link to='/dashboard' className='primary-button' style={{ textDecoration: 'none', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}>
+              <span>Return to Customer Dashboard</span>
+              <span>↗</span>
             </Link>
           </div>
         </div>
@@ -3243,10 +3272,21 @@ function AdminLoginScreen({ auth, setAuth, onSubmit, busy, error, onDismissError
       </section>
       <section className='auth-side'>
         <div className='auth-form-wrap'>
-          <p className='eyebrow'>ADMIN ACCESS</p>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '5px 12px', borderRadius: '999px', background: 'rgba(23, 61, 49, 0.08)', color: '#173d31', fontSize: '11px', fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: '14px' }}>
+            <ShieldCheck size={14} />
+            <span>Authorized Administrators Only</span>
+          </div>
           <h2>Administrator login</h2>
           <p className='form-subtitle'>Sign in with your administrator phone number and password.</p>
           {error && <ErrorToast message={error} onDismiss={onDismissError} />}
+          {error && (error.includes('/login') || error.toLowerCase().includes('customer')) && (
+            <div style={{ margin: '14px 0', padding: '12px 14px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+              <span style={{ fontSize: '13px', color: '#991b1b', fontWeight: 500 }}>Customer account detected</span>
+              <Link to='/login' style={{ fontSize: '12px', fontWeight: 700, color: '#991b1b', textDecoration: 'underline' }}>
+                Customer Login ↗
+              </Link>
+            </div>
+          )}
           <form onSubmit={onSubmit} className='form-stack'>
             <label className='field'>
               <span>Phone number *</span>
@@ -3491,8 +3531,15 @@ function AuthScreen({ auth, setAuth, mode, onSubmit, onSwitchMode, busy, error, 
         <div className='auth-form-wrap'>
           <p className='eyebrow'>{registering ? 'CREATE YOUR ACCOUNT' : 'WELCOME BACK'}</p>
           <h2>{registering ? 'Join MKM' : 'Sign in'}</h2>
-          <p className='form-subtitle'>{registering ? 'Your account starts here with a 70 ETB welcome bonus.' : 'Sign in with your Ethiopian phone number and password.'}</p>
           {error && <ErrorToast message={error} onDismiss={onDismissError} />}
+          {!registering && error && (error.includes('/admin/login') || error.toLowerCase().includes('administrator')) && (
+            <div style={{ margin: '14px 0', padding: '12px 14px', borderRadius: '8px', background: 'rgba(23, 61, 49, 0.08)', border: '1px solid rgba(23, 61, 49, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+              <span style={{ fontSize: '13px', color: '#173d31', fontWeight: 500 }}>Administrator account detected</span>
+              <Link to='/admin/login' style={{ fontSize: '12px', fontWeight: 700, color: '#173d31', textDecoration: 'underline' }}>
+                Admin Portal ↗
+              </Link>
+            </div>
+          )}
           <form onSubmit={onSubmit} className='form-stack'>
             {registering && (
               <label className='field'>
