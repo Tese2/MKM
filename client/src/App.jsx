@@ -476,6 +476,7 @@ function AppRoutes() {
 
   useEffect(() => {
     if (authLoading) return;
+    if (location.pathname === '/admin/login') return;
     if (user?.role === 'ADMIN') {
       if (!location.pathname.startsWith('/admin')) {
         navigate('/admin', { replace: true });
