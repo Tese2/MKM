@@ -476,7 +476,6 @@ function AppRoutes() {
 
   useEffect(() => {
     if (authLoading) return;
-    if (location.pathname === '/admin/login') return;
     if (user?.role === 'ADMIN') {
       if (!location.pathname.startsWith('/admin')) {
         navigate('/admin', { replace: true });
@@ -513,21 +512,7 @@ function AppRoutes() {
       <Route path='/' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/welcome'} replace /> : <PublicWebsite user={null} onPurchase={purchase} busy={busy} />} />
       <Route path='/login' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/welcome'} replace /> : <AuthScreen auth={auth} setAuth={setAuth} mode='login' onSubmit={submitAuth} onSwitchMode={() => navigate(`/register${location.search}`)} busy={busy} error={error} onDismissError={() => setError('')} appDownloadUrl={support?.appDownloadUrl} />} />
       <Route path='/register' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/welcome'} replace /> : <AuthScreen auth={auth} setAuth={setAuth} mode='register' onSubmit={submitAuth} onSwitchMode={() => navigate('/login')} busy={busy} error={error} onDismissError={() => setError('')} appDownloadUrl={support?.appDownloadUrl} />} />
-<Route
-  path='/admin/login'
-  element={
-    user?.role === 'ADMIN'
-      ? <Navigate to='/admin' replace />
-      : <AdminLoginScreen
-          auth={auth}
-          setAuth={setAuth}
-          authError={authError}
-          setAuthError={setAuthError}
-          busy={busy}
-          submitAdminAuth={submitAdminAuth}
-        />
-  }
-/>      
+      <Route path='/admin/login' element={user ? (user.role === 'ADMIN' ? <Navigate to='/admin' replace /> : <Navigate to='/dashboard' replace />) : <AdminLoginScreen auth={auth} setAuth={setAuth} onSubmit={submitAdminAuth} busy={busy} error={error} onDismissError={() => setError('')} />} />
       <Route path='/admin' element={!user ? <Navigate to='/admin/login' replace /> : user.role === 'ADMIN' ? <ProtectedAdminApp user={user} onSignOut={signOut} busy={busy} notice={notice} error={error} setError={setError} setNotice={setNotice} /> : <AdminAccessDenied />} />
       <Route path='/admin/*' element={!user ? <Navigate to='/admin/login' replace /> : user.role === 'ADMIN' ? <ProtectedAdminApp user={user} onSignOut={signOut} busy={busy} notice={notice} error={error} setError={setError} setNotice={setNotice} /> : <AdminAccessDenied />} />
       <Route path='/*' element={
