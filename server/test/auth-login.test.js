@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { inactiveCustomerMessage, isInactiveCustomer } from '../src/routes/auth.js';
+import { cookieOptions, inactiveCustomerMessage, isInactiveCustomer } from '../src/routes/auth.js';
 
 test('deactivated account login message includes the admin reason', () => {
   assert.equal(
@@ -28,4 +28,26 @@ test('suspended customer message reflects the account status', () => {
     inactiveCustomerMessage('Additional verification required.', 'SUSPENDED'),
     'Your account has been suspended. Reason: Additional verification required.',
   );
+});
+
+test('local development cookies stay browser-compatible while production cookies remain cross-site', () => {
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousClientUrl = process.env.CLIENT_URL;
+
+  try {
+    delete process.env.NODE_ENV;
+    delete process.env.CLIENT_URL;
+    const local = cookieOptions();
+    assert.equal(local.secure, false);
+    assert.equal(local.sameSite, 'lax');
+
+    process.env.NODE_ENV = 'production';
+    process.env.CLIENT_URL = 'https://mkmroad.netlify.app';
+    const production = cookieOptions();
+    assert.equal(production.secure, true);
+    assert.equal(production.sameSite, 'none');
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previousNodeEnv;
+    if (previousClientUrl === undefined) delete process.env.CLIENT_URL; else process.env.CLIENT_URL = previousClientUrl;
+  }
 });

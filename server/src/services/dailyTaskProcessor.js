@@ -15,7 +15,8 @@ export async function claimDailyTask(client, { taskId, userId }) {
   const taskResult = await client.query(
     `SELECT dtr.id, dtr.user_id, dtr.product_purchase_id, dtr.business_date,
             dtr.calculated_amount::text AS calculated_amount, dtr.status,
-            pp.status AS purchase_status, pp.activated_at
+           pp.status AS purchase_status, pp.activated_at,
+           (pp.expires_at IS NULL OR pp.expires_at > now()) AS purchase_not_expired
      FROM daily_task_records dtr
      INNER JOIN product_purchases pp ON pp.id = dtr.product_purchase_id
      WHERE dtr.id = $1 FOR UPDATE OF dtr`,
@@ -36,6 +37,13 @@ export async function claimDailyTask(client, { taskId, userId }) {
     throw Object.assign(new Error('This task has already been processed.'), { status: 409, code: 'TASK_ALREADY_PROCESSED' });
   }
 
+  if (task.purchase_status !== 'ACTIVE') {
+    throw Object.assign(new Error('The associated purchase is no longer active.'), { status: 409, code: 'PURCHASE_INACTIVE' });
+  }
+  if (task.purchase_not_expired === false) {
+    throw Object.assign(new Error('The associated purchase has expired.'), { status: 409, code: 'PURCHASE_INACTIVE' });
+  }
+
   // True 24-hour check: activated_at + (day_offset + 1) × 24h <= now()
   const dateCheck = await client.query(
     `SELECT now() >= $1::timestamptz + (($2::date - $1::date) + 1) * INTERVAL '24 hours' AS eligible`,
@@ -45,10 +53,6 @@ export async function claimDailyTask(client, { taskId, userId }) {
     throw Object.assign(new Error('This task is not eligible yet. Please wait until the 24-hour earning period completes.'), {
       status: 409, code: 'TASK_NOT_YET_ELIGIBLE',
     });
-  }
-
-  if (task.purchase_status !== 'ACTIVE') {
-    throw Object.assign(new Error('The associated purchase is no longer active.'), { status: 409, code: 'PURCHASE_INACTIVE' });
   }
 
   // Mark the task as completed
@@ -95,6 +99,7 @@ export async function processEligibleTasksForUser(userId) {
      WHERE dtr.user_id = $1
        AND dtr.status = 'WAITING'
        AND pp.status = 'ACTIVE'
+       AND (pp.expires_at IS NULL OR pp.expires_at > now())
        AND now() >= pp.activated_at + ((dtr.business_date - pp.activated_at::date) + 1) * INTERVAL '24 hours'
      ORDER BY dtr.business_date ASC`,
     [userId],

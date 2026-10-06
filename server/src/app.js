@@ -43,6 +43,14 @@ import { requireTrustedOrigin } from './middleware/trustedOrigin.js';
 
 export const app = express();
 
+const trustedOrigins = (process.env.CLIENT_URL ?? 'http://localhost:5173')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+    .concat(['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:4173', 'https://mkmroad.netlify.app'])
+    .map((origin) => { try { return new URL(origin).origin; } catch { return null; } })
+    .filter(Boolean);
+
 // Render runs behind a reverse proxy.
 // This allows express-rate-limit to correctly read X-Forwarded-For.
 app.set('trust proxy', 1);
@@ -53,7 +61,12 @@ app.use(helmet());
 
 app.use(
     cors({
-        origin: process.env.CLIENT_URL ?? 'http://localhost:5173',
+        origin: (origin, callback) => {
+            if (!origin || trustedOrigins.includes(origin)) {
+                return callback(null, true);
+            }
+            return callback(new Error('Requests from this origin are not allowed.'));
+        },
         credentials: true
     })
 );

@@ -5,7 +5,8 @@ import { requireAdmin, requireAuth } from '../middleware/auth.js';
 import { createUserRateLimit } from '../middleware/userRateLimit.js';
 import { getMilestoneRewardStatus, summarizeRewardData, summarizeTaskData } from '../lib/rewardMetrics.js';
 import { postWalletMovement } from '../services/wallet.js';
-import { claimDailyTask } from '../services/dailyTaskProcessor.js';
+import { claimDailyTask, processEligibleTasksForUser } from '../services/dailyTaskProcessor.js';
+import { getReferredRechargeTotal } from '../services/rewardEligibility.js';
 
 export const transactionsRouter = Router();
 transactionsRouter.use(requireAuth);
@@ -65,6 +66,16 @@ transactionsRouter.get('/', async (request, response, next) => {
 
 export const notificationsRouter = Router();
 notificationsRouter.use(requireAuth);
+notificationsRouter.get('/unread-count', async (request, response, next) => {
+    try {
+        const result = await pool.query(
+            'SELECT count(*)::int AS "unreadCount" FROM notifications WHERE user_id=$1 AND is_read=false',
+            [request.auth.userId],
+        );
+        response.json({ success: true, data: result.rows[0] });
+    }
+    catch (error) { next(error); }
+});
 notificationsRouter.get('/', async (request, response, next) => {
     try {
         const query = z.object({ page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).max(100).default(25) }).safeParse(request.query);
@@ -98,8 +109,8 @@ export const tasksRouter = Router();
 tasksRouter.use(requireAuth);
 tasksRouter.get('/', async (request, response, next) => {
     try {
+        const autoCreditedTasks = await processEligibleTasksForUser(request.auth.userId);
         const result = await pool.query(`SELECT dtr.id, dtr.business_date AS "businessDate", dtr.status, dtr.calculated_amount::text AS "calculatedAmount",
-            dtr.base_amount::text AS "baseAmount", dtr.configured_rate::text AS "configuredRate",
             p.name AS "productName",
             pp.id AS "productPurchaseId",
             (pp.activated_at + ((dtr.business_date - pp.activated_at::date) + 1) * INTERVAL '24 hours') AS "eligibleAt",
@@ -111,7 +122,7 @@ tasksRouter.get('/', async (request, response, next) => {
         ORDER BY dtr.business_date DESC, p.name ASC, dtr.created_at DESC`, [request.auth.userId]);
 
         const items = result.rows.map(({ totalCount, ...item }) => item);
-        response.json({ success: true, data: { items, summary: summarizeTaskData(items) } });
+        response.json({ success: true, data: { items, summary: summarizeTaskData(items), autoCredited: autoCreditedTasks.length > 0 } });
     }
     catch (error) { next(error); }
 });
@@ -137,16 +148,12 @@ rewardsRouter.use(requireAuth);
 const rewardClaimLimiter = createUserRateLimit({ limit: 20 });
 rewardsRouter.get('/', async (request, response, next) => {
     try {
+        const qualifyingRechargeTotal = await getReferredRechargeTotal(pool, request.auth.userId);
         const result = await pool.query(`SELECT rr.id, rr.name, rr.rule_type AS "ruleType", rr.threshold_amount::text AS "thresholdAmount",
             rr.reward_amount::text AS "rewardAmount", rr.status, rc.id AS "claimId", rc.status AS "claimStatus",
-            rc.amount::text AS amount, rc.created_at AS "createdAt",
-            coalesce(eligible.total, 0)::text AS "qualifyingDeposits"
+            rc.amount::text AS amount, rc.created_at AS "createdAt"
         FROM reward_rules rr
         LEFT JOIN reward_claims rc ON rc.reward_rule_id = rr.id AND rc.user_id = $1
-        LEFT JOIN LATERAL (
-          SELECT sum(amount) AS total FROM recharge_requests
-          WHERE user_id = $1 AND status = 'APPROVED' AND credited_at IS NOT NULL
-        ) eligible ON true
         WHERE rr.status = 'ACTIVE'
         ORDER BY rr.created_at DESC`, [request.auth.userId]);
 
@@ -160,17 +167,21 @@ rewardsRouter.get('/', async (request, response, next) => {
                 ruleStatus: row.status,
                 ruleType: row.ruleType,
                 claimStatus: row.claimStatus,
-                qualifyingDeposits: row.qualifyingDeposits,
+                qualifyingRechargeAmount: qualifyingRechargeTotal,
                 thresholdAmount: row.thresholdAmount,
             }),
             amount: row.amount ?? row.rewardAmount ?? '0.00',
             createdAt: row.createdAt,
             claimId: row.claimId,
-            qualifyingDeposits: row.qualifyingDeposits,
+            qualifyingRechargeAmount: qualifyingRechargeTotal,
             ruleStatus: row.status,
         }));
 
-        response.json({ success: true, data: { items, summary: summarizeRewardData(items) } });
+        response.json({ success: true, data: {
+            items,
+            summary: summarizeRewardData(items),
+            qualifyingRechargeAmount: qualifyingRechargeTotal,
+        } });
     }
     catch (error) { next(error); }
 });
@@ -192,10 +203,9 @@ rewardsRouter.post('/:ruleId/claim', rewardClaimLimiter, async (request, respons
             if (existing.rowCount)
                 throw Object.assign(new Error('This reward has already been claimed or resolved.'), { status: 409, code: 'REWARD_ALREADY_CLAIMED' });
 
-            const eligible = await client.query(`SELECT coalesce(sum(amount), 0)::text AS total FROM recharge_requests
-              WHERE user_id = $1 AND status = 'APPROVED' AND credited_at IS NOT NULL`, [request.auth.userId]);
-            if (Number(eligible.rows[0].total) < Number(selectedRule.threshold_amount))
-                throw Object.assign(new Error('Your approved deposits have not reached this reward threshold.'), { status: 409, code: 'REWARD_THRESHOLD_NOT_MET' });
+            const qualifyingRechargeTotal = await getReferredRechargeTotal(client, request.auth.userId);
+            if (Number(qualifyingRechargeTotal) < Number(selectedRule.threshold_amount))
+                throw Object.assign(new Error("Your invited friends' approved recharges have not reached this reward threshold."), { status: 409, code: 'REWARD_THRESHOLD_NOT_MET' });
 
             const inserted = await client.query(`INSERT INTO reward_claims(user_id, reward_rule_id, amount, status, requested_at)
               VALUES ($1, $2, $3, 'PENDING', now())

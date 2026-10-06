@@ -36,6 +36,11 @@ test('trusted origin middleware allows the configured client origin for mutation
   assert.equal(runMiddleware({ origin: configuredOrigin }).nextCalled, true);
 });
 
+test('trusted origin middleware allows the known production and local origins', () => {
+  assert.equal(runMiddleware({ origin: 'https://mkmroad.netlify.app' }).nextCalled, true);
+  assert.equal(runMiddleware({ origin: 'http://localhost:5173' }).nextCalled, true);
+});
+
 test('trusted origin middleware does not restrict safe methods', () => {
   assert.equal(runMiddleware({ method: 'GET' }).nextCalled, true);
   assert.equal(runMiddleware({ method: 'OPTIONS' }).nextCalled, true);

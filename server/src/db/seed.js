@@ -13,10 +13,10 @@ try {
         SELECT defaults.name, defaults.rule_type, defaults.threshold_amount, defaults.reward_amount, defaults.frequency, defaults.status
         FROM (VALUES
           ('Daily reward', 'DAILY', 0::numeric, 0::numeric, 'DAILY', 'ACTIVE'),
-          ('5,000 ETB deposit milestone', 'MILESTONE', 5000::numeric, 500::numeric, 'ONCE', 'ACTIVE'),
-          ('8,000 ETB deposit milestone', 'MILESTONE', 8000::numeric, 800::numeric, 'ONCE', 'ACTIVE'),
-          ('20,000 ETB deposit milestone', 'MILESTONE', 20000::numeric, 2000::numeric, 'ONCE', 'ACTIVE'),
-          ('50,000 ETB deposit milestone', 'MILESTONE', 50000::numeric, 8000::numeric, 'ONCE', 'ACTIVE'),
+          ('5,000 ETB friends recharge reward', 'MILESTONE', 5000::numeric, 500::numeric, 'ONCE', 'ACTIVE'),
+          ('8,000 ETB friends recharge reward', 'MILESTONE', 8000::numeric, 800::numeric, 'ONCE', 'ACTIVE'),
+          ('20,000 ETB friends recharge reward', 'MILESTONE', 20000::numeric, 2000::numeric, 'ONCE', 'ACTIVE'),
+          ('50,000 ETB friends recharge reward', 'MILESTONE', 50000::numeric, 8000::numeric, 'ONCE', 'ACTIVE'),
           ('Weekly reward', 'WEEKLY', 0::numeric, 0::numeric, 'WEEKLY', 'ACTIVE')
         ) AS defaults(name, rule_type, threshold_amount, reward_amount, frequency, status)
         WHERE NOT EXISTS (

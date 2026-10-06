@@ -36,6 +36,7 @@ export async function api(path, options = {}) {
   if (!response.ok || !result?.success) {
     const error = new Error(result?.message ?? 'The request could not be completed.');
     error.status = response.status;
+    error.code = result?.code;
     throw error;
   }
 

@@ -7,22 +7,25 @@ import welcomePromotionImage from './welcome-promotion.svg';
 import { getProductImage } from './productImages.js';
 
 const navItems = [
+  { to: '/my', label: 'MY', icon: UserCircle },
   { to: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { to: '/products', label: 'Products', icon: Package },
   { to: '/tasks', label: 'Daily Tasks', icon: FileText },
-  { to: '/purchases', label: 'Purchase History', icon: Package },
+  { to: '/purchases', label: 'My Products', icon: Package },
   { to: '/recharge', label: 'Recharge', icon: ArrowDownToLine },
   { to: '/recharge/history', label: 'Recharge History', icon: FileText },
-  { to: '/withdrawal-account', label: 'Withdrawal Account', icon: ShieldCheck },
   { to: '/withdraw', label: 'Withdraw', icon: ArrowUpFromLine },
-  { to: '/withdraw/history', label: 'Withdrawal History', icon: FileText },
   { to: '/referrals', label: 'Referrals', icon: Users },
   { to: '/rewards', label: 'Rewards', icon: Gift },
   { to: '/transactions', label: 'Transactions', icon: Wallet },
-  { to: '/notifications', label: 'Notifications', icon: Bell },
-  { to: '/profile', label: 'Profile', icon: UserCircle },
+  { to: '/profile', label: 'Personal Information', icon: UserCircle },
   { to: '/support', label: 'Support', icon: ShieldCheck },
 ];
+
+const myNavPaths = ['/profile', '/transactions', '/recharge/history', '/rewards', '/referrals', '/tasks'];
+const myPageNavItem = navItems.find(({ to }) => to === '/my');
+const MyPageIcon = myPageNavItem.icon;
+const workspaceNavItems = navItems.filter(({ to }) => !myNavPaths.includes(to) && to !== '/my');
 
 const money = (amount) => `${Number(amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ETB`;
 const rateFraction = (rate) => {
@@ -224,7 +227,7 @@ function AppRoutes() {
       if (me.role === 'CUSTOMER') {
         showCustomerSuccess(mode === 'register' ? 'Your account was created successfully.' : 'You signed in successfully.');
       }
-      navigate('/dashboard', { replace: true });
+      navigate('/welcome', { replace: true });
     } catch (cause) {
       setError(cause.message);
     } finally {
@@ -289,6 +292,15 @@ function AppRoutes() {
   }
 
   async function purchase(productId) {
+    const product = products.find((item) => item.id === productId);
+    const availableBalance = Number(dashboard?.wallet?.availableBalance);
+    if (product && Number.isFinite(availableBalance) && availableBalance < Number(product.price)) {
+      setError('');
+      setNotice('You do not have enough balance to buy this product. Recharge your wallet to continue.');
+      navigate('/recharge');
+      return;
+    }
+
     setBusy(true);
     setError('');
     try {
@@ -303,7 +315,12 @@ function AppRoutes() {
       showCustomerSuccess('Product purchased successfully.');
     } catch (cause) {
       resolveIdempotencyKey(`product.purchase.${productId}`, cause);
-      setError(cause.message);
+      if (cause.code === 'INSUFFICIENT_BALANCE') {
+        setNotice('You do not have enough balance to buy this product. Recharge your wallet to continue.');
+        navigate('/recharge');
+      } else {
+        setError(cause.message);
+      }
     } finally {
       setBusy(false);
     }
@@ -351,7 +368,7 @@ function AppRoutes() {
       setWithdrawals(await api('/withdrawals'));
       await loadDashboard();
       setNotice('Withdrawal request submitted.');
-      navigate('/withdraw/history');
+      navigate('/withdraw');
     } catch (cause) {
       resolveIdempotencyKey('withdrawal.submit', cause);
       setError(cause.message);
@@ -375,7 +392,7 @@ function AppRoutes() {
   }, [user]);
 
   useEffect(() => {
-    if (!user || !location.pathname.startsWith('/products')) return;
+    if (!user || (!location.pathname.startsWith('/products') && location.pathname !== '/dashboard' && location.pathname !== '/')) return;
     let active = true;
     const loadProducts = () => {
       if (document.visibilityState === 'hidden') return;
@@ -443,7 +460,7 @@ function AppRoutes() {
   }, [user, location.pathname]);
 
   useEffect(() => {
-    if (!user || !['/withdraw', '/withdrawal-account'].includes(location.pathname)) return;
+    if (!user || !['/withdraw', '/profile', '/withdrawal-account'].includes(location.pathname)) return;
     Promise.all([
       api('/withdrawal-accounts'),
       api('/withdrawals'),
@@ -467,7 +484,7 @@ function AppRoutes() {
     }
     if (user?.role === 'CUSTOMER') {
       if (location.pathname === '/login' || location.pathname === '/register' || location.pathname === '/admin/login') {
-        navigate('/dashboard', { replace: true });
+        navigate('/welcome', { replace: true });
         return;
       }
     }
@@ -492,9 +509,9 @@ function AppRoutes() {
 
   return (
     <Routes>
-      <Route path='/' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <PublicWebsite user={null} onPurchase={purchase} busy={busy} />} />
-      <Route path='/login' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <AuthScreen auth={auth} setAuth={setAuth} mode='login' onSubmit={submitAuth} onSwitchMode={() => navigate(`/register${location.search}`)} busy={busy} error={error} onDismissError={() => setError('')} appDownloadUrl={support?.appDownloadUrl} />} />
-      <Route path='/register' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/dashboard'} replace /> : <AuthScreen auth={auth} setAuth={setAuth} mode='register' onSubmit={submitAuth} onSwitchMode={() => navigate('/login')} busy={busy} error={error} onDismissError={() => setError('')} appDownloadUrl={support?.appDownloadUrl} />} />
+      <Route path='/' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/welcome'} replace /> : <PublicWebsite user={null} onPurchase={purchase} busy={busy} />} />
+      <Route path='/login' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/welcome'} replace /> : <AuthScreen auth={auth} setAuth={setAuth} mode='login' onSubmit={submitAuth} onSwitchMode={() => navigate(`/register${location.search}`)} busy={busy} error={error} onDismissError={() => setError('')} appDownloadUrl={support?.appDownloadUrl} />} />
+      <Route path='/register' element={user ? <Navigate to={user.role === 'ADMIN' ? '/admin' : '/welcome'} replace /> : <AuthScreen auth={auth} setAuth={setAuth} mode='register' onSubmit={submitAuth} onSwitchMode={() => navigate('/login')} busy={busy} error={error} onDismissError={() => setError('')} appDownloadUrl={support?.appDownloadUrl} />} />
       <Route path='/admin/login' element={user ? (user.role === 'ADMIN' ? <Navigate to='/admin' replace /> : <Navigate to='/dashboard' replace />) : <AdminLoginScreen auth={auth} setAuth={setAuth} onSubmit={submitAdminAuth} busy={busy} error={error} onDismissError={() => setError('')} />} />
       <Route path='/admin' element={!user ? <Navigate to='/admin/login' replace /> : user.role === 'ADMIN' ? <ProtectedAdminApp user={user} onSignOut={signOut} busy={busy} notice={notice} error={error} setError={setError} setNotice={setNotice} /> : <AdminAccessDenied />} />
       <Route path='/admin/*' element={!user ? <Navigate to='/admin/login' replace /> : user.role === 'ADMIN' ? <ProtectedAdminApp user={user} onSignOut={signOut} busy={busy} notice={notice} error={error} setError={setError} setNotice={setNotice} /> : <AdminAccessDenied />} />
@@ -2827,14 +2844,14 @@ function AdminRewardsPage({ onError, onNotice }) {
       </div>
       <div className='surface form-surface form-stack'>
         <h4>{editingRule ? 'Edit reward rule' : 'Add reward rule'}</h4>
-        <p className='form-subtitle'>Milestone eligibility uses the customer’s approved, credited deposits. Reward amounts and thresholds are enforced by the server.</p>
+        <p className='form-subtitle'>Friends' approved recharges across your A, B, and C referral levels count toward milestone rewards.</p>
         <form key={editingRule?.id ?? 'new-rule'} className='form-stack' onSubmit={saveRule}>
           <div className='profile-form-grid'>
             <label className='field'><span>Rule name</span><input name='name' defaultValue={formValues.name} maxLength='120' required /></label>
             <label className='field'><span>Type</span><select name='ruleType' defaultValue={formValues.ruleType}><option value='MILESTONE'>Milestone</option><option value='DAILY'>Daily</option><option value='WEEKLY'>Weekly</option></select></label>
           </div>
           <div className='profile-form-grid'>
-            <label className='field'><span>Qualifying deposits (ETB)</span><input type='number' name='thresholdAmount' min='0' max='1000000000' step='0.01' defaultValue={formValues.thresholdAmount} required /></label>
+            <label className='field'><span>Friends' recharge target (ETB)</span><input type='number' name='thresholdAmount' min='0' max='1000000000' step='0.01' defaultValue={formValues.thresholdAmount} required /></label>
             <label className='field'><span>Reward amount (ETB)</span><input type='number' name='rewardAmount' min='0' max='1000000000' step='0.01' defaultValue={formValues.rewardAmount} required /></label>
           </div>
           <div className='profile-form-grid'>
@@ -2848,7 +2865,7 @@ function AdminRewardsPage({ onError, onNotice }) {
         </form>
         <div className='table-wrap'>
           <table>
-            <thead><tr><th>Rule</th><th>Type</th><th>Threshold</th><th>Reward</th><th>Frequency</th><th>Status</th><th>Action</th></tr></thead>
+            <thead><tr><th>Rule</th><th>Type</th><th>Friends' recharge target</th><th>Reward</th><th>Frequency</th><th>Status</th><th>Action</th></tr></thead>
             <tbody>{rules.map((rule) => (
               <tr key={rule.id}>
                 <td>{rule.name}</td><td>{rule.ruleType}</td><td>{money(rule.thresholdAmount)}</td><td>{money(rule.rewardAmount)}</td><td>{rule.frequency}</td><td><StatusBadge status={rule.status} /></td>
@@ -2865,7 +2882,7 @@ function AdminRewardsPage({ onError, onNotice }) {
       {visibleClaims.length ? (
         <div className='table-wrap'>
           <table>
-            <thead><tr><th>Customer</th><th>Phone</th><th>Reward</th><th>Threshold</th><th>Amount</th><th>Status</th><th>Requested</th><th>Review</th></tr></thead>
+            <thead><tr><th>Customer</th><th>Phone</th><th>Reward</th><th>Friends' recharge target</th><th>Amount</th><th>Status</th><th>Requested</th><th>Review</th></tr></thead>
             <tbody>{visibleClaims.map((claim) => (
               <tr key={claim.id}>
                 <td>{claim.fullName}</td><td>{claim.phoneNumber}</td><td>{claim.name}</td><td>{money(claim.thresholdAmount)}</td><td>{money(claim.amount)}</td>
@@ -3333,29 +3350,63 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
   const location = useLocation();
   const [navOpen, setNavOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
+  const [currentVipInfo, setCurrentVipInfo] = useState({ loading: true, purchase: null });
   const currentPath = location.pathname || '/dashboard';
+  useEffect(() => {
+    let active = true;
+    const refreshUnreadCount = () => {
+      api('/notifications/unread-count')
+        .then(({ unreadCount }) => {
+          if (active) setUnreadNotificationCount(unreadCount);
+        })
+        .catch((cause) => {
+          if (active) setError(cause.message);
+        });
+    };
+    const refreshOnFocus = () => {
+      if (document.visibilityState === 'visible') refreshUnreadCount();
+    };
+
+    refreshUnreadCount();
+    const interval = window.setInterval(refreshUnreadCount, 60000);
+    window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshOnFocus);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshOnFocus);
+    };
+  }, [setError]);
+
   useEffect(() => {
     setNavOpen(false);
     setMobileMenuOpen(false);
   }, [location.pathname]);
+  useEffect(() => {
+    if (!location.hash) return;
+    document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [location.pathname, location.hash]);
   const currentTitle = (() => {
     if (currentPath.startsWith('/products/')) return 'Product details';
     if (currentPath === '/welcome') return 'Welcome to MKM';
+    if (currentPath === '/my') return 'MY';
     if (currentPath === '/dashboard') return 'Overview';
     if (currentPath === '/products') return 'Products';
     if (currentPath === '/tasks') return 'Daily Tasks';
-    if (currentPath === '/purchases') return 'Purchase history';
+    if (currentPath === '/purchases') return 'My Products';
     if (currentPath === '/recharge') return 'Recharge';
     if (currentPath === '/recharge/payment') return 'Payment details';
     if (currentPath === '/recharge/history') return 'Recharge history';
-    if (currentPath === '/withdrawal-account') return 'Withdrawal Account';
+    if (currentPath === '/withdrawal-account') return 'Personal Information';
     if (currentPath === '/withdraw') return 'Withdraw';
-    if (currentPath === '/withdraw/history') return 'Withdrawal history';
+    if (currentPath === '/withdraw/history') return 'Withdraw';
     if (currentPath === '/referrals') return 'Referrals';
     if (currentPath === '/rewards') return 'Rewards';
     if (currentPath === '/transactions') return 'Transactions';
     if (currentPath === '/notifications') return 'Notifications';
-    if (currentPath === '/profile') return 'Profile';
+    if (currentPath === '/profile') return 'Personal Information';
     if (currentPath === '/support') return 'Support';
     if (currentPath === '/download') return 'Download App';
     return 'Member portal';
@@ -3373,11 +3424,13 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
     switch (currentPath) {
       case '/dashboard':
       case '/':
-        return <Overview data={dashboard} support={support} onCopy={onCopyReferral} />;
+        return <Overview data={dashboard} products={products} busy={busy} onPurchase={onPurchase} onCopy={onCopyReferral} support={support} />;
+      case '/my':
+        return <MyPage support={support} dashboard={dashboard} onCurrentVipChange={setCurrentVipInfo} onSignOut={onSignOut} />;
       case '/products':
         return <Products items={products} busy={busy} onPurchase={onPurchase} />;
       case '/tasks':
-        return <TasksPage onCustomerSuccess={onCustomerSuccess} onRefreshDashboard={onRefreshDashboard} />;
+        return <TasksPage onRefreshDashboard={onRefreshDashboard} />;
       case '/purchases':
         return <PurchasesPage />;
       case '/recharge':
@@ -3387,11 +3440,11 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
       case '/recharge/history':
         return <RechargeHistoryPage />;
       case '/withdrawal-account':
-        return <WithdrawalAccountPage accounts={accounts} methods={methods} support={support} busy={busy} onSaveAccount={onSaveAccount} />;
+        return <Navigate to='/profile' replace />;
       case '/withdraw':
         return <Withdraw accounts={accounts} history={withdrawals} balance={dashboard?.wallet?.availableBalance} settings={settings} busy={busy} onSubmit={onSubmitWithdrawal} />;
       case '/withdraw/history':
-        return <WithdrawHistoryPage />;
+        return <Navigate to='/withdraw' replace />;
       case '/referrals':
         return <Team summary={team} members={members} loading={referralsLoading} error={referralsError} onDismissError={() => setReferralsError('')} code={dashboard?.referralCode ?? referralInfo?.referralCode} referralLink={referralInfo?.referralLink ?? (dashboard?.referralCode ? `${window.location.origin}/register?ref=${dashboard.referralCode}` : '')} rates={referralInfo?.rates ?? { A: 22, B: 2, C: 1 }} onCopyCode={onCopyReferral} onCopyLink={() => {
           const value = referralInfo?.referralLink ?? (dashboard?.referralCode ? `${window.location.origin}/register?ref=${dashboard.referralCode}` : '');
@@ -3417,9 +3470,9 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
       case '/transactions':
         return <TransactionsPage />;
       case '/notifications':
-        return <NotificationsPage />;
+        return <NotificationsPage onMarkRead={() => setUnreadNotificationCount((count) => Math.max(0, count - 1))} />;
       case '/profile':
-        return <ProfilePage />;
+        return <ProfilePage methods={methods} support={support} busy={busy} onSaveAccount={onSaveAccount} />;
       case '/support':
         return <SupportPage />;
       case '/download':
@@ -3430,7 +3483,7 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
   };
 
   return (
-    <div className='workspace'>
+    <div className='workspace customer-workspace'>
       {user?.role === 'CUSTOMER' && customerSuccessAlert && (
         <div className='customer-success-toast' role='status' aria-live='polite'>
           <CheckCircle2 size={22} aria-hidden='true' />
@@ -3448,30 +3501,62 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
             {navOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
         </div>
-        <p className='nav-label'>WORKSPACE</p>
         <nav id='customer-navigation' className={navOpen ? 'is-open' : ''} aria-label='Member navigation'>
-          {navItems.map(({ to, label, icon: Icon }) => (
-            <NavLink key={to} to={to} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} end={to === '/dashboard'}>
-              <Icon size={17} strokeWidth={1.8} />
-              {label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className='sidebar-bottom'>
-          <span className='avatar'>{user?.fullName?.slice(0, 1).toUpperCase()}</span>
-          <div className='user-chip'>
-            <strong>{user?.fullName}</strong>
+          <NavLink to={myPageNavItem.to} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
+            <MyPageIcon size={17} strokeWidth={1.8} />
+            {myPageNavItem.label}
+          </NavLink>
+          <div className='nav-section'>
+            <p className='nav-section-label'>WORKSPACE</p>
+            {workspaceNavItems.map(({ to, label, icon: Icon }) => (
+              <NavLink key={to} to={to} className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} end={to === '/dashboard'}>
+                <Icon size={17} strokeWidth={1.8} />
+                {label}
+              </NavLink>
+            ))}
           </div>
-          <button className='sign-out-button' type='button' onClick={onSignOut}><LogOut size={16} /> Log out</button>
-        </div>
+        </nav>
       </aside>
       <main className='main-area'>
         <header className='topbar'>
           <div>
-            <p className='eyebrow'>MEMBER ACCOUNT</p>
-            <h1>{currentTitle}</h1>
+            {currentPath === '/my' ? (
+              <>
+                <p className='eyebrow'>Current VIP</p>
+                <div className='customer-vip-heading'>
+                  <h1>{currentVipInfo.loading ? 'Loading…' : currentVipInfo.purchase?.name ?? 'VIP 0'}</h1>
+                  <span>{currentVipInfo.loading ? ' ' : currentVipInfo.purchase ? 'ACTIVE' : 'NO ACTIVE VIP'}</span>
+                </div>
+              </>
+            ) : currentPath === '/dashboard' || currentPath === '/' ? (
+              <div className='dashboard-balance-heading'>
+                <p className='eyebrow'>Available balance</p>
+                <h1>{money(dashboard?.wallet?.availableBalance)}</h1>
+                <small>ACCOUNT SUMMARY</small>
+              </div>
+            ) : (
+              <>
+                <p className='eyebrow'>MEMBER ACCOUNT</p>
+                <h1>{currentTitle}</h1>
+              </>
+            )}
           </div>
-          <div className='topbar-right'><span className='status-dot' /> Account active</div>
+          <div className='topbar-right'>
+            <NavLink
+              to='/notifications'
+              className={({ isActive }) => `notification-icon-link ${isActive ? 'active' : ''}`}
+              aria-label='Notifications'
+              title='Notifications'
+            >
+              <Bell size={20} strokeWidth={1.9} aria-hidden='true' />
+              {unreadNotificationCount > 0 && (
+                <span className='notification-unread-badge' aria-label={`${unreadNotificationCount} unread notifications`}>
+                  {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+                </span>
+              )}
+            </NavLink>
+            <span className='status-dot' /> Account active
+          </div>
         </header>
         <div className='content'>
           {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
@@ -3486,27 +3571,34 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
               <strong>All member pages</strong>
               <button type='button' className='customer-mobile-menu-close' onClick={() => setMobileMenuOpen(false)} aria-label='Close all pages menu'><X size={18} /></button>
             </div>
-            <div className='customer-mobile-menu-grid'>
-              {navItems.map(({ to, label, icon: Icon }) => (
-                <NavLink key={to} to={to} className={({ isActive }) => `customer-mobile-menu-link ${isActive ? 'active' : ''}`} end={to === '/dashboard'}>
-                  <Icon size={18} strokeWidth={1.8} />
-                  <span>{label}</span>
-                </NavLink>
-              ))}
+            <NavLink to={myPageNavItem.to} className={({ isActive }) => `customer-mobile-menu-link my-page-menu-link ${isActive ? 'active' : ''}`} onClick={() => setMobileMenuOpen(false)}>
+              <MyPageIcon size={18} strokeWidth={1.8} />
+              <span>{myPageNavItem.label}</span>
+            </NavLink>
+            <div className='customer-mobile-menu-section'>
+              <p className='customer-mobile-menu-label'>WORKSPACE</p>
+              <div className='customer-mobile-menu-grid'>
+                {workspaceNavItems.map(({ to, label, icon: Icon }) => (
+                  <NavLink key={to} to={to} className={({ isActive }) => `customer-mobile-menu-link ${isActive ? 'active' : ''}`} end={to === '/dashboard'}>
+                    <Icon size={18} strokeWidth={1.8} />
+                    <span>{label}</span>
+                  </NavLink>
+                ))}
+              </div>
             </div>
           </div>
         )}
         <div className='customer-mobile-dock'>
-          {navItems.filter(({ to }) => ['/dashboard', '/products', '/recharge', '/withdraw'].includes(to)).map(({ to, label, icon: Icon }) => (
+          {navItems.filter(({ to }) => ['/dashboard', '/purchases', '/rewards', '/referrals'].includes(to)).map(({ to, label, icon: Icon }) => (
             <NavLink key={to} to={to} className={({ isActive }) => `customer-mobile-dock-link ${isActive ? 'active' : ''}`} end={to === '/dashboard'}>
               <Icon size={19} strokeWidth={1.9} />
               <span>{label === 'Overview' ? 'Home' : label}</span>
             </NavLink>
           ))}
-          <button type='button' className={`customer-mobile-dock-link ${mobileMenuOpen ? 'active' : ''}`} aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen((open) => !open)}>
-            {mobileMenuOpen ? <X size={19} /> : <Menu size={19} />}
-            <span>{mobileMenuOpen ? 'Close' : 'More'}</span>
-          </button>
+          <NavLink to='/my' className={({ isActive }) => `customer-mobile-dock-link ${isActive ? 'active' : ''}`}>
+            <MyPageIcon size={19} strokeWidth={1.9} />
+            <span>MY</span>
+          </NavLink>
         </div>
       </nav>
     </div>
@@ -3710,94 +3802,123 @@ function WelcomePromotionPage({ registrationBonus, support }) {
   );
 }
 
-function Overview({ data, support, onCopy }) {
+function Overview({ data, products = [], busy, onPurchase, onCopy, support = {} }) {
   const wallet = data?.wallet;
-  const supportDestination = support?.customerSupportEnabled ? (support.customerSupportUrl || support.whatsappUrl || '/support') : '/support';
-  const quickActions = [
-    { label: 'Recharge', to: '/recharge', icon: ArrowDownToLine },
-    { label: 'Withdraw', to: '/withdraw', icon: ArrowUpFromLine },
-    { label: 'Products', to: '/products', icon: Package },
-    { label: 'Daily Tasks', to: '/tasks', icon: FileText },
-    { label: 'Referral', to: '/referrals', icon: Users },
-    { label: 'Rewards', to: '/rewards', icon: Gift },
-    { label: 'Transactions', to: '/transactions', icon: Wallet },
-    { label: 'Notifications', to: '/notifications', icon: Bell },
-    { label: 'Withdrawal Account', to: '/withdrawal-account', icon: ShieldCheck },
-    { label: 'Profile', to: '/profile', icon: UserCircle },
-    { label: support?.customerSupportLabel || 'Customer Support', to: supportDestination, icon: ShieldCheck, external: Boolean(support?.customerSupportEnabled && support?.customerSupportUrl) },
-    { label: support?.officialGroupLabel || 'Official Group', to: support?.officialGroupEnabled ? (support.officialGroupUrl || '/support') : '/support', icon: Users, external: Boolean(support?.officialGroupEnabled && support?.officialGroupUrl) },
-    { label: 'WhatsApp Support', to: support?.whatsappEnabled ? (support.whatsappUrl || '/support') : '/support', icon: MessageCircle, external: Boolean(support?.whatsappEnabled && support?.whatsappUrl) },
-    { label: 'Download App', to: support?.appDownloadUrl && support.appDownloadUrl.startsWith('http') ? support.appDownloadUrl : '/download', icon: ArrowDownToLine, external: Boolean(support?.appDownloadUrl && support.appDownloadUrl.startsWith('http')) },
-  ];
+  const [chatOpen, setChatOpen] = useState(false);
+  const homeProducts = [...products];
+  const vipFourIndex = homeProducts.findIndex((product) => /^V(?:I)?P\s*4\b/i.test(String(product.name)));
+  const vipFiveIndex = homeProducts.findIndex((product) => /^V(?:I)?P\s*5\b/i.test(String(product.name)));
+  if (vipFourIndex >= 0 && vipFiveIndex >= 0 && vipFiveIndex !== vipFourIndex + 1) {
+    const [vipFive] = homeProducts.splice(vipFiveIndex, 1);
+    const updatedVipFourIndex = homeProducts.findIndex((product) => /^V(?:I)?P\s*4\b/i.test(String(product.name)));
+    homeProducts.splice(updatedVipFourIndex + 1, 0, vipFive);
+  }
+  const customerSupportUrl = support.customerSupportEnabled && support.customerSupportUrl
+    ? support.customerSupportUrl
+    : '/support';
+  const officialGroupUrl = support.officialGroupEnabled && support.officialGroupUrl
+    ? support.officialGroupUrl
+    : '/support';
+  const customerSupportExternal = customerSupportUrl.startsWith('http');
+  const officialGroupExternal = officialGroupUrl.startsWith('http');
 
   return (
     <>
       <section className='welcome-row'>
-        <div>
-          <p className='eyebrow'>YOUR ACCOUNT AT A GLANCE</p>
-          <h2>Good to see you.</h2>
-          <p>Your MKM activity, all in one place.</p>
+        <div className='overview-account-actions'>
+          <Link className='secondary-button' to='/withdraw'>Withdraw</Link>
+          <Link className='primary-button' to='/recharge'>Recharge</Link>
         </div>
-        <div className='date-stamp'>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</div>
       </section>
-      <div className='metric-grid'>
-        <Metric label='Available balance' value={money(wallet?.availableBalance)} tone='green' />
-        <Metric label='Pending balance' value={money(wallet?.pendingBalance)} />
-        <Metric label='Locked balance' value={money(wallet?.lockedBalance)} />
-        <Metric label='Team members' value={data?.team?.total?.userCount ?? '—'} />
-      </div>
-      <div className='dashboard-quick-actions'>
-        {quickActions.map(({ label, to, icon: Icon, external }) => {
-          const cardClassName = 'dashboard-action-card';
-          if (external) {
-            return (
-              <a key={label} className={cardClassName} href={to} target='_blank' rel='noreferrer'>
-                <Icon size={18} />
-                <span>{label}</span>
+      <div className='overview-chat-widget'>
+        {chatOpen && (
+          <section className='online-chat-panel' aria-label='Chat and support options'>
+            <div className='online-chat-panel-heading'>
+              <strong>How can we help?</strong>
+              <button type='button' onClick={() => setChatOpen(false)} aria-label='Close chat options'><X size={17} /></button>
+            </div>
+            {officialGroupExternal ? (
+              <a href={officialGroupUrl} target='_blank' rel='noreferrer' onClick={() => setChatOpen(false)}>
+                <Users size={18} />
+                <span>{support.officialGroupLabel || 'Official Group'}</span>
               </a>
-            );
-          }
-
-          return (
-            <Link key={label} className={cardClassName} to={to}>
-              <Icon size={18} />
-              <span>{label}</span>
-            </Link>
-          );
-        })}
+            ) : (
+              <Link to={officialGroupUrl} onClick={() => setChatOpen(false)}>
+                <Users size={18} />
+                <span>{support.officialGroupLabel || 'Official Group'}</span>
+              </Link>
+            )}
+            {customerSupportExternal ? (
+              <a href={customerSupportUrl} target='_blank' rel='noreferrer' onClick={() => setChatOpen(false)}>
+                <ShieldCheck size={18} />
+                <span>{support.customerSupportLabel || 'Customer Support'}</span>
+              </a>
+            ) : (
+              <Link to={customerSupportUrl} onClick={() => setChatOpen(false)}>
+                <ShieldCheck size={18} />
+                <span>{support.customerSupportLabel || 'Customer Support'}</span>
+              </Link>
+            )}
+          </section>
+        )}
+        <button
+          className='online-chat-icon'
+          type='button'
+          aria-label={chatOpen ? 'Close chat options' : 'Open chat options'}
+          aria-expanded={chatOpen}
+          onClick={() => setChatOpen((open) => !open)}
+        >
+          {chatOpen ? <X size={22} /> : (
+            <MessageCircle size={22} />
+          )}
+        </button>
       </div>
-      <div className='overview-grid'>
-        <section className='surface activity'>
-          <div className='surface-heading'>
-            <div>
-              <p className='eyebrow'>WALLET</p>
-              <h3>Recent transactions</h3>
-            </div>
-            <span className='quiet-label'>LATEST 5</span>
+      <section className='referral-banner'>
+        <div className='referral-symbol'><Users size={20} /></div>
+        <p className='eyebrow'>GROW YOUR TEAM</p>
+        <h3>Your referral link</h3>
+        <button className='code-button' onClick={onCopy}>{data?.referralCode ? `${window.location.origin}/register?ref=${encodeURIComponent(data.referralCode)}` : 'Loading…'}<Copy size={15} /></button>
+      </section>
+      <section className='home-products-section' id='home-products'>
+        <div className='section-lead'>
+          <div>
+            <p className='eyebrow'>EXPLORE MKM</p>
+            <h2>Available products</h2>
           </div>
-          {data?.recentTransactions?.length ? (
-            <div className='transaction-list'>
-              {data.recentTransactions.map((item) => (
-                <div className='transaction' key={item.id}>
-                  <span className={`transaction-icon ${item.direction === 'CREDIT' ? 'credit' : ''}`}>{item.direction === 'CREDIT' ? '+' : '−'}</span>
-                  <div className='transaction-name'>
-                    <strong>{item.type.replaceAll('_', ' ')}</strong>
-                    <small>{new Date(item.createdAt).toLocaleDateString()}</small>
+          <Link className='secondary-button' to='/products'>View all</Link>
+        </div>
+        {products.length ? (
+          <div className='home-product-grid'>
+            {homeProducts.map((product) => {
+              const rate = Number(product.dailyRate ?? 0.24);
+              const dailyRate = rate > 1 ? rate / 100 : rate;
+              const dailyIncome = Number(product.price ?? 0) * dailyRate;
+              const isComingSoon = product.status === 'COMING_SOON' || (product.availableFrom && new Date(product.availableFrom) > new Date());
+              return (
+                <article className='home-product-card' key={product.id}>
+                  <img src={getProductImage(product)} alt={`${product.name} product`} loading='lazy' />
+                  <div className='home-product-content'>
+                    <div className='home-product-title'>
+                      <h3>{product.name}</h3>
+                      <span className={`product-status ${isComingSoon ? 'coming-soon' : String(product.status).toLowerCase()}`}>
+                        {isComingSoon ? 'COMING SOON' : String(product.status).replaceAll('_', ' ')}
+                      </span>
+                    </div>
+                    <strong className='home-product-price'>{money(product.price)}</strong>
+                    <span className='home-product-return'>{money(dailyIncome)} daily return · {product.durationDays} days</span>
+                    <div className='home-product-actions'>
+                      <Link className='secondary-button' to={`/products/${product.id}`}>Details</Link>
+                      <button className='primary-button' type='button' disabled={busy || isComingSoon || product.status !== 'AVAILABLE'} onClick={() => onPurchase(product.id)}>
+                        {isComingSoon ? 'Coming soon' : product.status === 'AVAILABLE' ? 'Buy' : 'Unavailable'}
+                      </button>
+                    </div>
                   </div>
-                  <strong className={item.direction === 'CREDIT' ? 'amount-positive' : ''}>{item.direction === 'CREDIT' ? '+' : '−'}{money(item.amount)}</strong>
-                </div>
-              ))}
-            </div>
-          ) : <Empty>No wallet activity yet.</Empty>}
-        </section>
-        <section className='referral-banner'>
-          <div className='referral-symbol'><Users size={20} /></div>
-          <p className='eyebrow'>GROW YOUR TEAM</p>
-          <h3>Your referral link</h3>
-          <p>Invite members and follow activity across your A, B and C levels.</p>
-          <button className='code-button' onClick={onCopy}>{data?.referralCode ? `${window.location.origin}/register?ref=${encodeURIComponent(data.referralCode)}` : 'Loading…'}<Copy size={15} /></button>
-        </section>
-      </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : <Empty>No products are listed yet.</Empty>}
+      </section>
     </>
   );
 }
@@ -3912,33 +4033,48 @@ function PurchasesPage() {
     api('/purchases').then(setPurchases).catch(() => setPurchases([]));
   }, []);
   return (
-    <section className='surface table-surface'>
-      <div className='surface-heading'>
+    <section className='my-products-page'>
+      <div className='section-lead'>
         <div>
-          <p className='eyebrow'>PURCHASES</p>
-          <h3>Product purchase history</h3>
+          <p className='eyebrow'>YOUR PACKAGES</p>
+          <h2>My Products</h2>
+        </div>
+        <div className='my-products-actions'>
+          <Link className='secondary-button' to='/dashboard#home-products'>Browse products</Link>
+          <Link className='primary-button' to='/tasks'>Daily Tasks</Link>
         </div>
       </div>
       {purchases.length ? (
-        <div className='table-wrap'>
-          <table>
-            <thead>
-              <tr><th>Product</th><th>Amount</th><th>Status</th><th>Purchased at</th><th>Activated at</th></tr>
-            </thead>
-            <tbody>
-              {purchases.map((item) => (
-                <tr key={item.id}>
-                  <td>{item.name}</td>
-                  <td>{money(item.amount)}</td>
-                  <td>{item.status}</td>
-                  <td>{item.createdAt ? new Date(item.createdAt).toLocaleString() : '—'}</td>
-                  <td>{item.activatedAt ? new Date(item.activatedAt).toLocaleString() : '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className='my-products-grid'>
+          {purchases.map((item) => {
+            const dailyRate = rateFraction(item.dailyRate);
+            const dailyReturn = Number(item.productPrice ?? item.amount) * dailyRate;
+            return (
+              <article className='my-product-card' key={item.id}>
+                <img src={getProductImage(item)} alt={`${item.name} product`} loading='lazy' />
+                <div className='my-product-content'>
+                  <div className='my-product-heading'>
+                    <div>
+                      <p className='eyebrow'>VIP LEVEL</p>
+                      <h3>{item.name}</h3>
+                    </div>
+                    <StatusBadge status={item.status} />
+                  </div>
+                  <div className='my-product-metrics'>
+                    <div><small>AMOUNT</small><strong>{money(item.amount)}</strong></div>
+                    <div><small>DAILY RETURN</small><strong className='highlight-green'>{money(dailyReturn)}</strong></div>
+                    <div><small>DURATION</small><strong>{item.durationDays} days</strong></div>
+                  </div>
+                  <div className='my-product-dates'>
+                    <span>Purchased {item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '—'}</span>
+                    <span>Activated {item.activatedAt ? new Date(item.activatedAt).toLocaleString() : '—'}</span>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
-      ) : <Empty>No purchases yet.</Empty>}
+      ) : <section className='surface form-surface my-products-empty'><Empty>No purchased products yet.</Empty><div className='my-products-actions'><Link className='primary-button' to='/dashboard#home-products'>Browse products</Link><Link className='secondary-button' to='/tasks'>Daily Tasks</Link></div></section>}
     </section>
   );
 }
@@ -4081,7 +4217,7 @@ function Recharge({ methods, history, busy, onSubmit, settings }) {
   };
 
   return (
-    <>
+    <div className='recharge-page'>
       <div className='section-lead'>
         <div>
           <p className='eyebrow'>ADD FUNDS</p>
@@ -4135,7 +4271,7 @@ function Recharge({ methods, history, busy, onSubmit, settings }) {
             <strong>{selectedAmount ? `${selectedAmount.toLocaleString()} ETB` : '0.00 ETB'}</strong>
           </div>
 
-          <div className='surface-heading' style={{ marginTop: '16px' }}>
+          <div className='surface-heading recharge-payment-step'>
             <div>
               <p className='eyebrow'>STEP 2</p>
               <h3>Payment Method</h3>
@@ -4160,14 +4296,14 @@ function Recharge({ methods, history, busy, onSubmit, settings }) {
 
           {localError && <ErrorToast message={localError} onDismiss={() => setLocalError('')} />}
 
-          <div className='button-row' style={{ marginTop: '14px' }}>
+          <div className='button-row recharge-continue-row'>
             <button className='primary-button large-btn' type='button' disabled={busy || !selectedAmount} onClick={continueToPayment}>
               Continue to Payment Details <span>→</span>
             </button>
           </div>
         </div>
 
-        <section className='surface history-surface'>
+        <section className='surface history-surface recharge-recent-history'>
           <div className='surface-heading'>
             <div>
               <p className='eyebrow'>RECENT</p>
@@ -4177,7 +4313,7 @@ function Recharge({ methods, history, busy, onSubmit, settings }) {
           <History rows={history} />
         </section>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -4311,7 +4447,7 @@ function RechargePaymentPage({ methods, settings, onCustomerSuccess }) {
         )}
       </div>
 
-      <section className='surface form-surface form-stack' style={{ marginTop: '24px' }}>
+      <section className='surface form-surface form-stack recharge-payment-verification'>
         <div className='surface-heading'>
           <div>
             <p className='eyebrow'>VERIFICATION</p>
@@ -4650,7 +4786,7 @@ function Withdraw({ accounts, history, balance, settings, busy, onSubmit }) {
             ) : (
               <div className='notice-box'>
                 <p>You must add a verified withdrawal account before requesting a withdrawal.</p>
-                <Link className='primary-button' to='/withdrawal-account'>Set up Withdrawal Account ↗</Link>
+                <Link className='primary-button' to='/profile'>Set up Personal Information ↗</Link>
               </div>
             )}
 
@@ -4934,7 +5070,7 @@ function TransactionsPage() {
   );
 }
 
-function NotificationsPage() {
+function NotificationsPage({ onMarkRead }) {
   const [items, setItems] = useState({ items: [], pagination: { total: 0 } });
   useEffect(() => {
     api('/notifications?page=1&limit=25').then(setItems).catch(() => setItems({ items: [], pagination: { total: 0 } }));
@@ -4946,6 +5082,7 @@ function NotificationsPage() {
       ...current,
       items: current.items.map((item) => item.id === id ? { ...item, isRead: true } : item),
     }));
+    onMarkRead?.();
   }
 
   return (
@@ -4976,11 +5113,99 @@ function NotificationsPage() {
   );
 }
 
-function ProfilePage() {
+function MyPage({ support = {}, dashboard, onCurrentVipChange, onSignOut }) {
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    api('/purchases')
+      .then((items) => {
+        if (active) {
+          const currentPurchase = items.find((purchase) => purchase.status === 'ACTIVE') ?? null;
+          onCurrentVipChange({ loading: false, purchase: currentPurchase });
+        }
+      })
+      .catch((cause) => {
+        if (active) {
+          setError(cause.message || 'Unable to load your current VIP level.');
+          onCurrentVipChange({ loading: false, purchase: null });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [onCurrentVipChange]);
+
+  const supportDestination = support.customerSupportEnabled && support.customerSupportUrl
+    ? support.customerSupportUrl
+    : '/support';
+  const activityDestinations = [
+    { to: '/profile', label: 'Personal Information', icon: UserCircle },
+    { to: '/transactions', label: 'Transactions', icon: Wallet },
+    { to: '/recharge/history', label: 'Recharge History', icon: FileText },
+    { to: '/rewards', label: 'Rewards', icon: Gift },
+    { to: '/tasks', label: 'Daily Tasks', icon: CheckCircle2 },
+  ];
+  const resourceDestinations = [
+    { to: supportDestination, label: support.customerSupportLabel || 'Customer Support', icon: ShieldCheck, external: Boolean(support.customerSupportEnabled && support.customerSupportUrl) },
+    { to: support.officialGroupEnabled ? (support.officialGroupUrl || '/support') : '/support', label: support.officialGroupLabel || 'Official Group', icon: Users, external: Boolean(support.officialGroupEnabled && support.officialGroupUrl) },
+    { to: support.appDownloadUrl?.startsWith('http') ? support.appDownloadUrl : '/download', label: 'Download App', icon: ArrowDownToLine, external: Boolean(support.appDownloadUrl?.startsWith('http')) },
+  ];
+
+  const renderDestinationLinks = (destinations) => destinations.map(({ to, label, icon: Icon, external }) => {
+    const content = (
+      <>
+        <span className='my-page-link-icon'><Icon size={19} strokeWidth={1.8} /></span>
+        <span>{label}</span>
+        <span className='my-page-arrow' aria-hidden='true'>↗</span>
+      </>
+    );
+    return external ? (
+      <a key={label} className='my-page-link' href={to} target='_blank' rel='noreferrer'>{content}</a>
+    ) : (
+      <Link key={label} className='my-page-link' to={to}>{content}</Link>
+    );
+  });
+
+  return (
+    <section className='my-page'>
+      {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
+      <section className='my-wallet-actions' aria-label='Wallet balance and actions'>
+        <div className='my-wallet-balance'>
+          <span>Available balance</span>
+          <strong>{money(dashboard?.wallet?.availableBalance)}</strong>
+        </div>
+        <div className='my-wallet-action-buttons'>
+          <Link className='secondary-button' to='/withdraw'>Withdraw</Link>
+          <Link className='primary-button' to='/recharge'>Recharge</Link>
+        </div>
+      </section>
+      <section className='my-page-link-group' aria-label='Account activity'>
+        <div className='my-page-group-heading'>
+          <h3>Account activity</h3>
+          <p>Manage your details, wallet activity, and member benefits.</p>
+        </div>
+        <div className='my-page-links'>{renderDestinationLinks(activityDestinations)}</div>
+      </section>
+      <section className='my-page-link-group' aria-label='Help and resources'>
+        <div className='my-page-group-heading'>
+          <h3>Help &amp; resources</h3>
+          <p>Get support and access MKM resources.</p>
+        </div>
+        <div className='my-page-links'>{renderDestinationLinks(resourceDestinations)}</div>
+      </section>
+      <button className='my-page-logout-button' type='button' onClick={onSignOut}>
+        <LogOut size={17} /> Log out
+      </button>
+    </section>
+  );
+}
+
+function ProfilePage({ methods = [], support = {}, busy = false, onSaveAccount }) {
   const [profile, setProfile] = useState(null);
   const [accounts, setAccounts] = useState([]);
   const [fullName, setFullName] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [saveBusy, setSaveBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -4997,7 +5222,7 @@ function ProfilePage() {
 
   async function saveProfile(event) {
     event.preventDefault();
-    setBusy(true);
+    setSaveBusy(true);
     setError('');
     setNotice('');
 
@@ -5017,13 +5242,13 @@ function ProfilePage() {
     } catch (cause) {
       setError(cause.message);
     } finally {
-      setBusy(false);
+      setSaveBusy(false);
     }
   }
 
   return (
     <section className='surface form-surface form-stack'>
-      <p className='eyebrow'>PROFILE</p>
+      <p className='eyebrow'>PERSONAL INFORMATION</p>
       <h2>Account details</h2>
       {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
       {notice && <SuccessToast message={notice} onDismiss={() => setNotice('')} />}
@@ -5067,25 +5292,12 @@ function ProfilePage() {
               </label>
               <div className='field'>
                 <span>Profile Actions</span>
-                <button className='primary-button' type='submit' disabled={busy}>{busy ? 'Saving…' : 'Save changes'}<span>↗</span></button>
+                <button className='primary-button' type='submit' disabled={saveBusy}>{saveBusy ? 'Saving…' : 'Save changes'}<span>↗</span></button>
               </div>
             </div>
           </form>
 
-          <h3>Withdrawal accounts</h3>
-          {accounts.length ? (
-            <div className='history-list'>
-              {accounts.map((item) => (
-                <div className='history-row' key={item.id}>
-                  <div>
-                    <strong>{item.accountHolderName}</strong>
-                    <small>{item.accountNumber}</small>
-                  </div>
-                  <span className='history-status completed'>{item.paymentProvider}</span>
-                </div>
-              ))}
-            </div>
-          ) : <Empty>No withdrawal accounts saved yet.</Empty>}
+          <WithdrawalAccountPage accounts={accounts} methods={methods} support={support} busy={busy} onSaveAccount={onSaveAccount} />
         </>
       ) : <Empty>Profile information is unavailable.</Empty>}
     </section>
@@ -5109,44 +5321,34 @@ function formatUnlockTime(eligibleAt) {
   return `In ${minutes}m`;
 }
 
-function TasksPage({ onCustomerSuccess, onRefreshDashboard }) {
+function TasksPage({ onRefreshDashboard }) {
   const [tasks, setTasks] = useState({ items: [], summary: {} });
   const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState('');
   const [pageError, setPageError] = useState('');
   const [selectedProduct, setSelectedProduct] = useState('ALL');
   const [sortOrder, setSortOrder] = useState('asc');
 
-  const refresh = async () => {
-    setLoading(true);
+  const refresh = async (showLoading = false) => {
+    if (showLoading) setLoading(true);
     setPageError('');
     try {
-      setTasks(await api('/tasks'));
+      const result = await api('/tasks');
+      setTasks(result);
+      if (result.autoCredited) {
+        await onRefreshDashboard?.();
+      }
     } catch (cause) {
       setPageError(cause.message || 'Failed to load daily tasks.');
-      setTasks({ items: [], summary: {} });
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { refresh(); }, []);
-
-  const claim = async (taskId) => {
-    setBusyId(taskId);
-    setPageError('');
-    try {
-      const result = await api(`/tasks/${taskId}/claim`, { method: 'POST', ...jsonBody({}) });
-      const amountMsg = result?.amount ? ` (${money(result.amount)})` : '';
-      onCustomerSuccess?.(`Daily reward${amountMsg} claimed successfully!`);
-      await Promise.allSettled([refresh(), onRefreshDashboard?.()]);
-    } catch (cause) {
-      setPageError(cause.message || 'Unable to claim daily reward.');
-      await refresh();
-    } finally {
-      setBusyId('');
-    }
-  };
+  useEffect(() => {
+    refresh(true);
+    const interval = window.setInterval(() => refresh(), 60000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   // Group tasks by purchased product / purchase so each VIP displays its 30 days individually
   const productGroups = useMemo(() => {
@@ -5202,7 +5404,7 @@ function TasksPage({ onCustomerSuccess, onRefreshDashboard }) {
               onClick={() => setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
               title='Toggle chronological sort order'
             >
-              {sortOrder === 'asc' ? 'Order: Day 1 → 30' : 'Order: Day 30 → 1'}
+              {sortOrder === 'asc' ? 'Oldest first' : 'Newest first'}
             </button>
           </div>
         </div>
@@ -5249,7 +5451,7 @@ function TasksPage({ onCustomerSuccess, onRefreshDashboard }) {
                   Daily Reward: {money(group.dailyEarnings)}
                 </p>
                 <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: '#4b5563', fontWeight: 600 }}>
-                  {group.completedCount} of {group.totalDays} claimed
+                  {group.completedCount} of {group.totalDays} credited
                 </p>
               </div>
             </div>
@@ -5258,49 +5460,27 @@ function TasksPage({ onCustomerSuccess, onRefreshDashboard }) {
               <table>
                 <thead>
                   <tr>
-                    <th>Day</th>
                     <th>Business date</th>
-                    <th>Base amount</th>
                     <th>Daily earnings</th>
-                    <th>Status</th>
-                    <th>Action</th>
+                    <th>Wallet credit</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {group.items.map((item, index) => {
-                    const dayNumber = sortOrder === 'asc' ? index + 1 : group.items.length - index;
+                  {group.items.map((item) => {
                     const eligible = item.eligibleAt ? new Date(item.eligibleAt) <= new Date() : false;
-                    const canClaim = item.status === 'WAITING' && eligible;
                     return (
                       <tr key={item.id}>
-                        <td>
-                          <span style={{ display: 'inline-block', padding: '3px 8px', borderRadius: '4px', background: '#f3f4f6', fontWeight: 700, fontSize: '0.8rem', color: '#1f2937' }}>
-                            Day {dayNumber}
-                          </span>
-                        </td>
                         <td><strong>{new Date(item.businessDate).toLocaleDateString()}</strong></td>
-                        <td>{money(item.baseAmount)}</td>
                         <td><strong>{money(item.calculatedAmount)}</strong></td>
-                        <td><StatusBadge status={item.status} /></td>
                         <td>
-                          {canClaim ? (
-                            <button
-                              type='button'
-                              className='primary-button'
-                              style={{ padding: '6px 18px', fontSize: '0.85rem', fontWeight: 700, letterSpacing: '0.02em' }}
-                              disabled={Boolean(busyId)}
-                              onClick={() => claim(item.id)}
-                            >
-                              {busyId === item.id ? 'Claiming…' : 'Claim'}
-                            </button>
-                          ) : item.status === 'COMPLETED' ? (
-                            <strong style={{ color: '#16a34a', fontWeight: 700, fontSize: '0.85rem' }}>✓ Claimed</strong>
+                          {item.status === 'COMPLETED' ? (
+                            <strong style={{ color: '#16a34a', fontWeight: 700, fontSize: '0.85rem' }}>✓ Added to wallet</strong>
                           ) : item.status === 'WAITING' ? (
                             <strong
                               style={{ fontSize: '0.85rem', fontWeight: 700, color: '#111827', display: 'inline-flex', alignItems: 'center', gap: '5px' }}
                               title={`Unlocks at ${new Date(item.eligibleAt).toLocaleString()}`}
                             >
-                              🔒 {formatUnlockTime(item.eligibleAt)}
+                              {eligible ? 'Automatic credit processing' : `Available in ${formatUnlockTime(item.eligibleAt)}`}
                             </strong>
                           ) : item.status === 'NOT_ELIGIBLE' ? (
                             <strong style={{ fontSize: '0.85rem', fontWeight: 700, color: '#9ca3af' }}>Expired</strong>
@@ -5357,35 +5537,34 @@ function RewardsPage({ onCustomerSuccess }) {
       <div className='surface-heading'>
         <div>
           <p className='eyebrow'>REWARDS</p>
-          <h3>Deposit milestone rewards</h3>
+          <h3>Friends' recharge rewards</h3>
         </div>
       </div>
-      <p className='customer-rewards-intro'>Only approved deposits count toward your milestones. Submitted claims remain pending until an administrator reviews them.</p>
       {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
       <div className='metric-grid customer-reward-summary'>
-        <Metric label='Approved qualifying deposits' value={money(rewards.items?.[0]?.qualifyingDeposits ?? 0)} />
+        <Metric label="Friends' approved recharges" value={money(rewards.qualifyingRechargeAmount ?? rewards.items?.[0]?.qualifyingRechargeAmount ?? 0)} />
         <Metric label='Available to claim' value={money(rewards.summary?.totalClaimable ?? 0)} />
         <Metric label='Waiting for approval' value={money(rewards.summary?.totalPending ?? 0)} />
         <Metric label='Paid / approved' value={money(rewards.summary?.totalCompleted ?? 0)} />
       </div>
-      {loading ? <p className='empty-state' role='status'>Loading reward milestones…</p> : rewards.items?.length ? (
+      {loading ? <p className='empty-state' role='status'>Loading rewards…</p> : rewards.items?.length ? (
         <div className='customer-reward-grid'>
           {rewards.items.map((item) => {
             const progress = item.ruleType === 'MILESTONE' && Number(item.thresholdAmount) > 0
-              ? Math.min(100, (Number(item.qualifyingDeposits) / Number(item.thresholdAmount)) * 100)
+              ? Math.min(100, (Number(item.qualifyingRechargeAmount) / Number(item.thresholdAmount)) * 100)
               : 0;
             return (
               <article className='customer-reward-card' key={item.id}>
                 <div className='customer-reward-card-heading'>
-                  <div><p className='eyebrow'>{item.ruleType === 'MILESTONE' ? 'DEPOSIT MILESTONE' : item.ruleType}</p><h4>{item.name}</h4></div>
+                  <div><p className='eyebrow'>{item.ruleType === 'MILESTONE' ? 'FRIENDS’ RECHARGE REWARD' : item.ruleType}</p><h4>{item.name}</h4></div>
                   <span className='customer-reward-amount'>{money(item.rewardAmount)}</span>
                 </div>
                 {item.ruleType === 'MILESTONE' ? (
                   <div className='customer-reward-progress'>
-                    <div className='customer-reward-progress-label'><span>Approved deposits</span><strong>{money(item.qualifyingDeposits)} <small>of {money(item.thresholdAmount)}</small></strong></div>
-                    <div className='customer-reward-progress-track' role='progressbar' aria-label={`${item.name} deposit progress`} aria-valuemin='0' aria-valuemax='100' aria-valuenow={Math.round(progress)}><span style={{ width: `${progress}%` }} /></div>
+                    <div className='customer-reward-progress-label'><span>Friends' approved recharges</span><strong>{money(item.qualifyingRechargeAmount)} <small>of {money(item.thresholdAmount)}</small></strong></div>
+                    <div className='customer-reward-progress-track' role='progressbar' aria-label={`${item.name} friends' recharge progress`} aria-valuemin='0' aria-valuemax='100' aria-valuenow={Math.round(progress)}><span style={{ width: `${progress}%` }} /></div>
                   </div>
-                ) : <p className='customer-reward-unavailable'>This reward type is not currently available to claim.</p>}
+                ) : null}
                 <div className='customer-reward-footer'>
                   <StatusBadge status={item.status} />
                   {item.status === 'CLAIMABLE'
@@ -5394,13 +5573,13 @@ function RewardsPage({ onCustomerSuccess }) {
                       : item.status === 'APPROVED' ? 'Approved — awaiting payment'
                         : item.status === 'PAID' ? 'Paid to wallet'
                           : item.status === 'REJECTED' ? 'Claim rejected'
-                            : item.ruleType === 'MILESTONE' ? 'Deposit threshold not reached' : 'Not available for claim'}</span>}
+                            : item.ruleType === 'MILESTONE' ? 'Friends’ recharge target not reached' : 'Not available'}</span>}
                 </div>
               </article>
             );
           })}
         </div>
-      ) : <Empty>No reward milestones are configured yet.</Empty>}
+      ) : <Empty>No friends' recharge rewards are available yet.</Empty>}
     </section>
   );
 }

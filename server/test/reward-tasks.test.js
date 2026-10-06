@@ -55,13 +55,13 @@ test('default reward rules include the project core reward types', () => {
   );
 });
 
-test('milestone eligibility uses approved deposit totals and preserves claim status', () => {
+test('friends-recharge milestone eligibility preserves claim status', () => {
   const rule = { ruleStatus: 'ACTIVE', ruleType: 'MILESTONE', thresholdAmount: '5000.00' };
-  assert.equal(getMilestoneRewardStatus({ ...rule, qualifyingDeposits: '4999.99' }), 'NOT_ELIGIBLE');
-  assert.equal(getMilestoneRewardStatus({ ...rule, qualifyingDeposits: '5000.00' }), 'CLAIMABLE');
-  assert.equal(getMilestoneRewardStatus({ ...rule, qualifyingDeposits: '9000', claimStatus: 'PENDING' }), 'PENDING');
-  assert.equal(getMilestoneRewardStatus({ ...rule, ruleStatus: 'DISABLED', qualifyingDeposits: '9000' }), 'NOT_ELIGIBLE');
-  assert.equal(getMilestoneRewardStatus({ ...rule, ruleType: 'DAILY', qualifyingDeposits: '9000' }), 'NOT_ELIGIBLE');
+  assert.equal(getMilestoneRewardStatus({ ...rule, qualifyingRechargeAmount: '4999.99' }), 'NOT_ELIGIBLE');
+  assert.equal(getMilestoneRewardStatus({ ...rule, qualifyingRechargeAmount: '5000.00' }), 'CLAIMABLE');
+  assert.equal(getMilestoneRewardStatus({ ...rule, qualifyingRechargeAmount: '9000', claimStatus: 'PENDING' }), 'PENDING');
+  assert.equal(getMilestoneRewardStatus({ ...rule, ruleStatus: 'DISABLED', qualifyingRechargeAmount: '9000' }), 'NOT_ELIGIBLE');
+  assert.equal(getMilestoneRewardStatus({ ...rule, ruleType: 'DAILY', qualifyingRechargeAmount: '9000' }), 'NOT_ELIGIBLE');
 });
 
 test('claimDailyTask enforces 24-hour eligibility period before allowing claim', async () => {
@@ -81,6 +81,7 @@ test('claimDailyTask enforces 24-hour eligibility period before allowing claim',
             status: 'WAITING',
             purchase_status: 'ACTIVE',
             activated_at: '2026-10-04T12:00:00.000Z',
+            purchase_not_expired: true,
           }],
         };
       }
@@ -119,6 +120,7 @@ test('claimDailyTask rejects claim for already completed task', async () => {
             status: 'COMPLETED',
             purchase_status: 'ACTIVE',
             activated_at: '2026-10-04T12:00:00.000Z',
+            purchase_not_expired: true,
           }],
         };
       }
@@ -131,6 +133,40 @@ test('claimDailyTask rejects claim for already completed task', async () => {
     (err) => {
       assert.equal(err.code, 'TASK_ALREADY_PROCESSED');
       assert.equal(err.status, 409);
+      return true;
+    },
+  );
+});
+
+test('claimDailyTask does not credit rewards after the purchase expires', async () => {
+  const { claimDailyTask } = await import('../src/services/dailyTaskProcessor.js');
+
+  const mockClient = {
+    async query(sql) {
+      if (sql.includes('FOR UPDATE OF dtr')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: 'task-expired',
+            user_id: 'user-1',
+            product_purchase_id: 'purchase-1',
+            business_date: '2026-10-04',
+            calculated_amount: '50.00',
+            status: 'WAITING',
+            purchase_status: 'ACTIVE',
+            activated_at: '2026-10-04T12:00:00.000Z',
+            purchase_not_expired: false,
+          }],
+        };
+      }
+      return { rowCount: 0, rows: [] };
+    },
+  };
+
+  await assert.rejects(
+    () => claimDailyTask(mockClient, { taskId: 'task-expired', userId: 'user-1' }),
+    (err) => {
+      assert.equal(err.code, 'PURCHASE_INACTIVE');
       return true;
     },
   );

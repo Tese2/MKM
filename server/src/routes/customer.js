@@ -57,7 +57,8 @@ customerRouter.get('/purchases', requireAuth, async (request, response, next) =>
     try {
         const result = await pool.query(`SELECT pp.id, pp.amount::text AS amount, pp.status, pp.activated_at AS "activatedAt",
           pp.expires_at AS "expiresAt", pp.created_at AS "createdAt",
-          p.name, p.price::text AS "productPrice", p.daily_rate::text AS "dailyRate", p.duration_days AS "durationDays"
+          p.name, p.price::text AS "productPrice", p.daily_rate::text AS "dailyRate", p.duration_days AS "durationDays",
+          p.image_url AS "imageUrl", p.display_order AS "displayOrder"
         FROM product_purchases pp JOIN products p ON p.id = pp.product_id
         WHERE pp.user_id = $1 ORDER BY pp.created_at DESC LIMIT 100`, [request.auth.userId]);
         response.json({ success: true, data: result.rows });

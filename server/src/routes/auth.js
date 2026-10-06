@@ -192,8 +192,16 @@ function sanitizeUser(user) {
         ...(user.sponsor_name !== undefined ? { sponsorName: user.sponsor_name } : {}),
     };
 }
-function cookieOptions() {
-    return { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'none', signed: true, path: '/', maxAge: 7 * 24 * 60 * 60 * 1000 };
+export function cookieOptions() {
+    const isSecureContext = process.env.NODE_ENV === 'production' || (process.env.CLIENT_URL ?? '').startsWith('https://');
+    return {
+        httpOnly: true,
+        secure: isSecureContext,
+        sameSite: isSecureContext ? 'none' : 'lax',
+        signed: true,
+        path: '/',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+    };
 }
 function clearCookieOptions() {
     const options = cookieOptions();

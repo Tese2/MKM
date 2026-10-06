@@ -1,25 +1,24 @@
 import 'dotenv/config';
 import { app } from './app.js';
 import { pool } from './db/pool.js';
-import { expireOverduePurchases } from './services/dailyTaskProcessor.js';
+import { processAllEligibleTasks } from './services/dailyTaskProcessor.js';
 
 const port = Number(process.env.PORT ?? 4000);
 const server = app.listen(port, () => console.log(`MKM API listening on port ${port}`));
 
 // ---------------------------------------------------------------------------
-// Background worker — maintenance and expiration checks every 15 minutes.
-// Daily rewards require manual customer claim via Action button.
+// Credit eligible daily rewards automatically and expire overdue purchases.
 // ---------------------------------------------------------------------------
-const WORKER_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+const WORKER_INTERVAL_MS = 60 * 1000;
 let workerRunning = false;
 
 async function dailyTaskWorker() {
     if (workerRunning) return;
     workerRunning = true;
     try {
-        await expireOverduePurchases();
+        await processAllEligibleTasks();
     } catch (error) {
-        console.error('Maintenance worker error:', error.message);
+        console.error('Daily-task worker error:', error.message);
     } finally {
         workerRunning = false;
     }

@@ -62,9 +62,6 @@ productsRouter.post('/:productId/purchase', requireAuth, async (request, respons
             const userResult = await client.query("SELECT id FROM users WHERE id = $1 AND status = 'ACTIVE' FOR UPDATE", [request.auth.userId]);
             if (!userResult.rowCount)
                 throw Object.assign(new Error('This account cannot make purchases.'), { status: 403, code: 'ACCOUNT_INACTIVE' });
-            const duplicate = await client.query("SELECT 1 FROM product_purchases WHERE user_id = $1 AND product_id = $2 AND status = 'ACTIVE'", [request.auth.userId, product.id]);
-            if (duplicate.rowCount)
-                throw Object.assign(new Error('You already have an active purchase for this product.'), { status: 409, code: 'DUPLICATE_PURCHASE' });
             const walletResult = await client.query('SELECT id FROM wallets WHERE user_id = $1 FOR UPDATE', [request.auth.userId]);
             const wallet = walletResult.rows[0];
             if (!wallet)
