@@ -1,8 +1,11 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { z } from 'zod';
 import { getPool } from '../db/pool.js';
 import { normalizeSupportSettings } from '../lib/supportSettings.js';
 import { requireAdmin, requireAuth } from '../middleware/auth.js';
+import { createUserRateLimit } from '../middleware/userRateLimit.js';
+import { SUPPORT_ATTACHMENT_MAX_BYTES, validateSupportAttachment } from '../lib/supportChat.js';
 
 export const supportRouter = Router();
 supportRouter.use(requireAuth);
@@ -61,6 +64,193 @@ supportRouter.get('/', async (_request, response, next) => {
   }
 });
 
+const supportMessageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: SUPPORT_ATTACHMENT_MAX_BYTES, files: 1 },
+});
+const supportMessageLimiter = createUserRateLimit({ limit: 20 });
+const messageSchema = z.object({
+  text: z.string().trim().max(2000).optional(),
+});
+
+function uploadSupportMessage(request, response, next, handler) {
+  supportMessageUpload.single('file')(request, response, async (error) => {
+    if (error instanceof multer.MulterError) {
+      const tooLarge = error.code === 'LIMIT_FILE_SIZE';
+      return response.status(tooLarge ? 413 : 400).json({
+        success: false,
+        message: tooLarge ? 'Files must be 5 MB or smaller.' : 'Invalid file upload.',
+        code: error.code,
+      });
+    }
+    if (error) return next(error);
+    try {
+      await handler();
+    } catch (cause) {
+      next(cause);
+    }
+  });
+}
+
+function requireCustomerChat(request, response, next) {
+  if (request.auth.role !== 'CUSTOMER') {
+    return response.status(403).json({ success: false, message: 'Customer access is required.', code: 'FORBIDDEN' });
+  }
+  next();
+}
+
+async function prepareMessage(request) {
+  const parsed = messageSchema.safeParse(request.body);
+  if (!parsed.success) {
+    throw Object.assign(new Error(parsed.error.issues[0]?.message ?? 'Enter a message or attach a file.'), { status: 400 });
+  }
+  const text = parsed.data.text || null;
+  const attachment = request.file ? await validateSupportAttachment(request.file) : null;
+  if (!text && !attachment) {
+    throw Object.assign(new Error('Enter a message or attach a file.'), { status: 400 });
+  }
+  return {
+    text,
+    attachment,
+    buffer: request.file?.buffer ?? null,
+    size: request.file?.size ?? null,
+  };
+}
+
+async function insertSupportMessage({ customerId, senderId, senderRole, message }) {
+  const result = await getPool().query(
+    `INSERT INTO support_messages(
+       customer_id, sender_id, sender_role, message_text,
+       attachment_data, attachment_name, attachment_mime, attachment_size
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id, sender_role AS "senderRole", message_text AS text,
+               attachment_name AS "attachmentName",
+               attachment_mime AS "attachmentMime",
+               (attachment_data IS NOT NULL) AS "hasAttachment",
+               created_at AS "createdAt"`,
+    [
+      customerId,
+      senderId,
+      senderRole,
+      message.text,
+      message.buffer,
+      message.attachment?.name ?? null,
+      message.attachment?.mime ?? null,
+      message.size,
+    ],
+  );
+  return result.rows[0];
+}
+
+function mapSupportMessage(row) {
+  return {
+    id: row.id,
+    senderRole: row.senderRole,
+    text: row.text,
+    attachmentName: row.attachmentName,
+    attachmentMime: row.attachmentMime,
+    hasAttachment: row.hasAttachment,
+    createdAt: row.createdAt,
+  };
+}
+
+async function getSupportMessages(customerId) {
+  const result = await getPool().query(
+    `SELECT id, sender_role AS "senderRole", message_text AS text,
+            attachment_name AS "attachmentName",
+            attachment_mime AS "attachmentMime",
+            (attachment_data IS NOT NULL) AS "hasAttachment",
+            created_at AS "createdAt"
+     FROM (
+       SELECT id, sender_role, message_text, attachment_name, attachment_mime,
+              attachment_data, created_at
+       FROM support_messages
+       WHERE customer_id = $1
+       ORDER BY created_at DESC, id DESC
+       LIMIT 100
+     ) recent
+     ORDER BY "createdAt" ASC, id ASC`,
+    [customerId],
+  );
+  return result.rows.map(mapSupportMessage);
+}
+
+supportRouter.get('/chat/unread-count', requireCustomerChat, async (request, response, next) => {
+  try {
+    const result = await getPool().query(
+      `SELECT count(*)::int AS "unreadCount"
+       FROM support_messages
+       WHERE customer_id = $1 AND sender_role = 'ADMIN' AND customer_read_at IS NULL`,
+      [request.auth.userId],
+    );
+    response.json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+});
+
+async function sendSupportAttachment(response, messageId, customerId, forceDownload = false) {
+  const result = await getPool().query(
+    `SELECT attachment_data AS data, attachment_name AS name,
+            attachment_mime AS mime
+     FROM support_messages
+     WHERE id = $1 AND customer_id = $2 AND attachment_data IS NOT NULL`,
+    [messageId, customerId],
+  );
+  if (!result.rowCount) {
+    return response.status(404).json({ success: false, message: 'Attachment not found.', code: 'NOT_FOUND' });
+  }
+  const attachment = result.rows[0];
+  const isInlineImage = !forceDownload && ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(attachment.mime);
+  response.set({
+    'Content-Type': attachment.mime,
+    'Content-Disposition': `${isInlineImage ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(attachment.name)}`,
+    'Content-Length': attachment.data.length,
+    'Cache-Control': 'private, no-store',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  response.send(attachment.data);
+}
+
+supportRouter.get('/chat/messages', requireCustomerChat, async (request, response, next) => {
+  try {
+    await getPool().query(
+      `UPDATE support_messages SET customer_read_at = now()
+       WHERE customer_id = $1 AND sender_role = 'ADMIN' AND customer_read_at IS NULL`,
+      [request.auth.userId],
+    );
+    response.json({ success: true, data: await getSupportMessages(request.auth.userId) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+supportRouter.post('/chat/messages', requireCustomerChat, supportMessageLimiter, (request, response, next) => {
+  uploadSupportMessage(request, response, next, async () => {
+    const message = await prepareMessage(request);
+    const saved = await insertSupportMessage({
+      customerId: request.auth.userId,
+      senderId: request.auth.userId,
+      senderRole: 'CUSTOMER',
+      message,
+    });
+    response.status(201).json({ success: true, data: mapSupportMessage(saved) });
+  });
+});
+
+supportRouter.get('/chat/messages/:messageId/attachment', requireCustomerChat, async (request, response, next) => {
+  const parsedId = z.string().uuid().safeParse(request.params.messageId);
+  if (!parsedId.success) {
+    return response.status(400).json({ success: false, message: 'Invalid message ID.', code: 'VALIDATION_ERROR' });
+  }
+  try {
+    await sendSupportAttachment(response, parsedId.data, request.auth.userId, request.query.download === '1');
+  } catch (error) {
+    next(error);
+  }
+});
+
 const adminSupportSchema = z.object({
   siteName: z.string().trim().max(120).optional(),
   supportName: z.string().trim().max(120).optional(),
@@ -83,6 +273,101 @@ const adminSupportSchema = z.object({
 
 export const adminSupportRouter = Router();
 adminSupportRouter.use(requireAuth, requireAdmin);
+
+adminSupportRouter.get('/chats', async (_request, response, next) => {
+  try {
+    const result = await getPool().query(
+      `SELECT u.id AS "customerId", u.full_name AS "customerName",
+              u.phone_number AS "phoneNumber",
+              latest.message_text AS "lastText",
+              latest.attachment_name AS "lastAttachmentName",
+              latest.sender_role AS "lastSenderRole",
+              latest.created_at AS "lastMessageAt",
+              unread.count AS "unreadCount"
+       FROM (SELECT DISTINCT customer_id FROM support_messages) conversations
+       JOIN users u ON u.id = conversations.customer_id
+       LEFT JOIN LATERAL (
+         SELECT message_text, attachment_name, sender_role, created_at
+         FROM support_messages
+         WHERE customer_id = conversations.customer_id
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1
+       ) latest ON true
+       LEFT JOIN LATERAL (
+         SELECT count(*)::int AS count
+         FROM support_messages
+         WHERE customer_id = conversations.customer_id
+           AND sender_role = 'CUSTOMER' AND admin_read_at IS NULL
+       ) unread ON true
+       ORDER BY latest.created_at DESC NULLS LAST`,
+    );
+    response.json({ success: true, data: result.rows });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminSupportRouter.get('/chats/:customerId/messages', async (request, response, next) => {
+  const parsedId = z.string().uuid().safeParse(request.params.customerId);
+  if (!parsedId.success) {
+    return response.status(400).json({ success: false, message: 'Invalid customer ID.', code: 'VALIDATION_ERROR' });
+  }
+  try {
+    const customer = await getPool().query(
+      `SELECT id FROM users WHERE id = $1 AND role = 'CUSTOMER'`,
+      [parsedId.data],
+    );
+    if (!customer.rowCount) {
+      return response.status(404).json({ success: false, message: 'Customer not found.', code: 'NOT_FOUND' });
+    }
+    await getPool().query(
+      `UPDATE support_messages SET admin_read_at = now()
+       WHERE customer_id = $1 AND sender_role = 'CUSTOMER' AND admin_read_at IS NULL`,
+      [parsedId.data],
+    );
+    response.json({ success: true, data: await getSupportMessages(parsedId.data) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminSupportRouter.post('/chats/:customerId/messages', supportMessageLimiter, (request, response, next) => {
+  const parsedId = z.string().uuid().safeParse(request.params.customerId);
+  if (!parsedId.success) {
+    return response.status(400).json({ success: false, message: 'Invalid customer ID.', code: 'VALIDATION_ERROR' });
+  }
+  uploadSupportMessage(request, response, next, async () => {
+    const customer = await getPool().query(
+      `SELECT id FROM users WHERE id = $1 AND role = 'CUSTOMER'`,
+      [parsedId.data],
+    );
+    if (!customer.rowCount) {
+      return response.status(404).json({ success: false, message: 'Customer not found.', code: 'NOT_FOUND' });
+    }
+    const message = await prepareMessage(request);
+    const saved = await insertSupportMessage({
+      customerId: parsedId.data,
+      senderId: request.auth.userId,
+      senderRole: 'ADMIN',
+      message,
+    });
+    response.status(201).json({ success: true, data: mapSupportMessage(saved) });
+  });
+});
+
+adminSupportRouter.get('/chats/:customerId/messages/:messageId/attachment', async (request, response, next) => {
+  const parsedCustomerId = z.string().uuid().safeParse(request.params.customerId);
+  const parsedMessageId = z.string().uuid().safeParse(request.params.messageId);
+  if (!parsedCustomerId.success || !parsedMessageId.success) {
+    return response.status(400).json({ success: false, message: 'Invalid attachment ID.', code: 'VALIDATION_ERROR' });
+  }
+  try {
+    await sendSupportAttachment(response, parsedMessageId.data, parsedCustomerId.data, request.query.download === '1');
+  } catch (error) {
+    next(error);
+  }
+});
+
 const aboutPageSchema = z.object({
   aboutTitle: z.string().trim().min(1).max(160),
   aboutIntro: z.string().trim().min(1).max(2000),

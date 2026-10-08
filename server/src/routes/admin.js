@@ -6,9 +6,11 @@ import { normalizeAdminSettings } from '../lib/adminSettings.js';
 import { normalizePublicLinks } from '../lib/supportSettings.js';
 import { validateAccountNumber } from '../lib/bankValidation.js';
 import { ADMIN_PRIVILEGES, normalizePrivileges, hasPrivilege } from '../lib/adminPrivileges.js';
+import { runIdempotent } from '../db/idempotency.js';
 import { inTransaction, pool } from '../db/pool.js';
 import { requireAdmin, requireAdminPrivilege, requireAuth } from '../middleware/auth.js';
 import { createUserRateLimit } from '../middleware/userRateLimit.js';
+import { postWalletMovement } from '../services/wallet.js';
 
 export const adminRouter = Router();
 adminRouter.use(requireAuth, requireAdmin);
@@ -180,6 +182,77 @@ const customerStatusSchema = z.object({
   status: z.enum(['ACTIVE', 'SUSPENDED', 'DEACTIVATED']),
   reason: z.string().trim().max(500).optional(),
   adminPassword: z.string().min(1).max(128).optional(),
+});
+
+adminRouter.post('/customers/:id/penalties', requireAdminPrivilege('CUSTOMER_MANAGE'), async (request, response, next) => {
+  try {
+    const parsedId = z.string().uuid().safeParse(request.params.id);
+    const parsedBody = z.object({
+      amount: z.string().regex(/^(?:0|[1-9]\d{0,17})(?:\.\d{1,2})?$/),
+      comment: z.string().trim().min(1).max(1000),
+    }).safeParse(request.body);
+    if (!parsedId.success || !parsedBody.success) {
+      return response.status(400).json({
+        success: false,
+        message: parsedBody.success ? 'Invalid customer ID.' : parsedBody.error.issues[0]?.message ?? 'Enter a valid penalty amount and reason.',
+        code: 'VALIDATION_ERROR',
+      });
+    }
+    const [wholeAmount, fractionAmount = ''] = parsedBody.data.amount.split('.');
+    if (BigInt(wholeAmount) * 100n + BigInt(fractionAmount.padEnd(2, '0')) <= 0n) {
+      return response.status(400).json({ success: false, message: 'Penalty amount must be greater than zero.', code: 'VALIDATION_ERROR' });
+    }
+
+    const outcome = await inTransaction(async (client) => runIdempotent(client, {
+      userId: request.auth.userId,
+      operation: `admin.customer.${parsedId.data}.penalty`,
+      key: request.get('Idempotency-Key'),
+      payload: parsedBody.data,
+    }, async () => {
+      const customer = await client.query(
+        "SELECT id, full_name FROM users WHERE id = $1 AND role = 'CUSTOMER' FOR UPDATE",
+        [parsedId.data],
+      );
+      if (!customer.rowCount) {
+        throw Object.assign(new Error('Customer not found.'), { status: 404, code: 'NOT_FOUND' });
+      }
+      const referenceId = crypto.randomUUID();
+      const movement = await postWalletMovement(client, {
+        userId: parsedId.data,
+        amount: parsedBody.data.amount,
+        direction: 'DEBIT',
+        transactionType: 'ADJUSTMENT',
+        insufficientBalanceMessage: 'Penalty exceeds the customer’s available balance.',
+        referenceId,
+        referenceType: 'customer_penalty',
+        externalReference: `customer-penalty:${referenceId}`,
+        description: `Admin penalty: ${parsedBody.data.comment}`,
+      });
+      await client.query(
+        "INSERT INTO notifications(user_id, title, message, type) VALUES ($1, 'Balance penalty', $2, 'CUSTOMER_PENALTY')",
+        [parsedId.data, `${parsedBody.data.amount} ETB was deducted from your available balance. Reason: ${parsedBody.data.comment}`],
+      );
+      await client.query(
+        'INSERT INTO audit_logs(admin_id, action, entity_type, entity_id, old_value, new_value) VALUES ($1, $2, $3, $4, $5, $6)',
+        [request.auth.userId, 'CUSTOMER_PENALTY', 'user', parsedId.data, null, {
+          amount: parsedBody.data.amount,
+          comment: parsedBody.data.comment,
+          availableBalance: movement.availableBalance,
+          referenceId,
+        }],
+      );
+      return {
+        status: 200,
+        body: {
+          success: true,
+          data: { customerId: parsedId.data, amount: parsedBody.data.amount, availableBalance: movement.availableBalance },
+        },
+      };
+    }));
+    response.status(outcome.status).json(outcome.body);
+  } catch (error) {
+    next(error);
+  }
 });
 
 adminRouter.patch('/customers/:id/status', requireAdminPrivilege('CUSTOMER_MANAGE'), async (request, response, next) => {

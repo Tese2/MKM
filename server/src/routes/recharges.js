@@ -226,8 +226,13 @@ adminRechargesRouter.post('/:id/:action', async (request, response, next) => {
         }, async () => {
             const rechargeResult = await client.query('SELECT * FROM recharge_requests WHERE id = $1 FOR UPDATE', [request.params.id]);
             const recharge = rechargeResult.rows[0];
-            if (!recharge || !['PENDING', 'UNDER_REVIEW'].includes(recharge.status))
-                throw Object.assign(new Error('This recharge has already been resolved.'), { status: 409, code: 'INVALID_STATUS' });
+            if (!recharge)
+                throw Object.assign(new Error('Recharge request not found.'), { status: 404, code: 'NOT_FOUND' });
+            const allowedStatuses = action.data === 'reject'
+                ? ['PENDING', 'UNDER_REVIEW', 'APPROVED']
+                : ['PENDING', 'UNDER_REVIEW'];
+            if (!allowedStatuses.includes(recharge.status))
+                throw Object.assign(new Error(`This recharge is already ${recharge.status.toLowerCase()} and cannot be reviewed again.`), { status: 409, code: 'INVALID_STATUS' });
             if (action.data === 'review') {
                 const row = await client.query("UPDATE recharge_requests SET status = 'UNDER_REVIEW', admin_note = $2, reviewed_by = $3, reviewed_at = now(), updated_at = now() WHERE id = $1 RETURNING id, status", [recharge.id, note.data ?? null, request.auth.userId]);
                 await client.query('INSERT INTO audit_logs(admin_id, action, entity_type, entity_id, old_value, new_value) VALUES ($1, $2, $3, $4, $5, $6)', [request.auth.userId, 'RECHARGE_REVIEW', 'recharge', recharge.id, { status: recharge.status }, { status: 'UNDER_REVIEW', note: note.data ?? null }]);
@@ -236,9 +241,34 @@ adminRechargesRouter.post('/:id/:action', async (request, response, next) => {
             if (action.data === 'reject') {
                 if (!note.data)
                     throw Object.assign(new Error('Provide a reason for rejecting this recharge.'), { status: 400, code: 'REJECTION_NOTE_REQUIRED' });
-                const row = await client.query("UPDATE recharge_requests SET status = 'REJECTED', admin_note = $2, reviewed_by = $3, reviewed_at = now(), updated_at = now() WHERE id = $1 RETURNING id, status", [recharge.id, note.data, request.auth.userId]);
-                await client.query("INSERT INTO notifications(user_id, title, message, type) VALUES ($1, 'Recharge rejected', $2, 'RECHARGE_REJECTED')", [recharge.user_id, note.data]);
-                await client.query('INSERT INTO audit_logs(admin_id, action, entity_type, entity_id, old_value, new_value) VALUES ($1, $2, $3, $4, $5, $6)', [request.auth.userId, 'RECHARGE_REJECT', 'recharge', recharge.id, { status: recharge.status }, { status: 'REJECTED', note: note.data }]);
+                const wasApproved = recharge.status === 'APPROVED';
+                const row = await client.query(`UPDATE recharge_requests
+                    SET status = 'REJECTED',
+                        admin_note = $2,
+                        reviewed_by = $3,
+                        reviewed_at = now(),
+                        credited_at = CASE WHEN $4 = 'APPROVED' THEN NULL ELSE credited_at END,
+                        updated_at = now()
+                    WHERE id = $1
+                    RETURNING id, status, amount, user_id, transaction_reference`, [recharge.id, note.data, request.auth.userId, recharge.status]);
+                if (wasApproved) {
+                    await postWalletMovement(client, {
+                        userId: recharge.user_id,
+                        amount: String(recharge.amount),
+                        direction: 'DEBIT',
+                        transactionType: 'ADJUSTMENT',
+                        insufficientBalanceMessage: `This recharge cannot be rejected yet because the customer's available balance is less than ${recharge.amount}.`,
+                        referenceId: recharge.id,
+                        referenceType: 'recharge',
+                        externalReference: `${recharge.id}:reversal`,
+                        description: 'Recharge reversed after approval',
+                    });
+                    await client.query("INSERT INTO notifications(user_id, title, message, type) VALUES ($1, 'Recharge reversed', $2, 'RECHARGE_REVERSED')", [recharge.user_id, `Your ${recharge.amount} ETB recharge was reversed and deducted from your balance. Reason: ${note.data}`]);
+                    await client.query('INSERT INTO audit_logs(admin_id, action, entity_type, entity_id, old_value, new_value) VALUES ($1, $2, $3, $4, $5, $6)', [request.auth.userId, 'RECHARGE_REJECT_APPROVED', 'recharge', recharge.id, { status: recharge.status }, { status: 'REJECTED', note: note.data, balanceDeducted: String(recharge.amount) }]);
+                } else {
+                    await client.query("INSERT INTO notifications(user_id, title, message, type) VALUES ($1, 'Recharge rejected', $2, 'RECHARGE_REJECTED')", [recharge.user_id, note.data]);
+                    await client.query('INSERT INTO audit_logs(admin_id, action, entity_type, entity_id, old_value, new_value) VALUES ($1, $2, $3, $4, $5, $6)', [request.auth.userId, 'RECHARGE_REJECT', 'recharge', recharge.id, { status: recharge.status }, { status: 'REJECTED', note: note.data }]);
+                }
                 return { status: 200, body: { success: true, data: row.rows[0] } };
             }
             const duplicate = await client.query("SELECT 1 FROM recharge_requests WHERE id <> $1 AND transaction_reference = $2 AND status = 'APPROVED'", [recharge.id, recharge.transaction_reference]);

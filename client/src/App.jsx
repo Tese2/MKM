@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDownToLine, ArrowUpFromLine, Bell, CheckCircle2, CircleAlert, Copy, FileText, Gift, LayoutDashboard, LogOut, Menu, MessageCircle, Package, ShieldCheck, UserCircle, Users, Wallet, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, Bell, CheckCircle2, CircleAlert, Copy, FileText, Gift, LayoutDashboard, LogOut, Menu, MessageCircle, Package, Paperclip, Send, ShieldCheck, UserCircle, Users, Wallet, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { BrowserRouter, Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { api, assetUrl, jsonBody } from './services/api.js';
 import PublicWebsite from './PublicWebsite.jsx';
@@ -680,6 +680,7 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
     { to: '/admin/products', label: 'Products' },
     { to: '/admin/payment-methods', label: 'Payment Methods' },
     { to: '/admin/support', label: 'Support' },
+    { to: '/admin/support/chat', label: 'Chat Inbox' },
     { to: '/admin/about', label: 'About Page' },
     { to: '/admin/welcome', label: 'Welcome Page' },
     { to: '/admin/settings/links', label: 'Public Links' },
@@ -725,6 +726,9 @@ function ProtectedAdminApp({ user, onSignOut, busy, notice, error, setError, set
     }
     if (currentPath === '/admin/support') {
       return <AdminSupportPage support={support} onSave={saveSupport} />;
+    }
+    if (currentPath === '/admin/support/chat') {
+      return <AdminSupportInboxPage />;
     }
     if (currentPath === '/admin/about') {
       return <AdminAboutPage support={support} onSave={saveAboutPage} />;
@@ -824,6 +828,24 @@ function AdminDashboardPage({ stats }) {
         <Metric label='Total products' value={data.total_products ?? 0} />
         <Metric label='Active products' value={data.active_products ?? 0} />
       </div>
+      <div className='dashboard-quick-actions' aria-label='Admin shortcuts'>
+        <Link className='dashboard-quick-action' to='/admin/products'>
+          <Package size={19} aria-hidden='true' />
+          <span><strong>Products</strong><small>Manage product listings</small></span>
+        </Link>
+        <Link className='dashboard-quick-action' to='/admin/support/chat'>
+          <MessageCircle size={19} aria-hidden='true' />
+          <span><strong>Chat Inbox</strong><small>View customer messages</small></span>
+        </Link>
+        <Link className='dashboard-quick-action' to='/admin/withdrawals'>
+          <ArrowUpFromLine size={19} aria-hidden='true' />
+          <span><strong>Withdrawals</strong><small>Review payout requests</small></span>
+        </Link>
+        <Link className='dashboard-quick-action' to='/admin/recharges'>
+          <ArrowDownToLine size={19} aria-hidden='true' />
+          <span><strong>Recharges</strong><small>Review deposit requests</small></span>
+        </Link>
+      </div>
     </>
   );
 }
@@ -840,6 +862,8 @@ function AdminCustomersPage({ customers: initialCustomers, paymentMethods, onErr
   const [editAccountId, setEditAccountId] = useState(null);
   const [pendingCustomerId, setPendingCustomerId] = useState(null);
   const [notice, setNotice] = useState('');
+  const [penaltyInputs, setPenaltyInputs] = useState({});
+  const penaltyKeys = useRef({});
 
   // Details modal state
   const [viewCustomerDetails, setViewCustomerDetails] = useState(null);
@@ -882,6 +906,43 @@ function AdminCustomersPage({ customers: initialCustomers, paymentMethods, onErr
       onError(cause.message);
     } finally {
       setDetailsLoading(false);
+    }
+  }
+
+  async function applyPenalty(event, customer) {
+    event.preventDefault();
+    const input = penaltyInputs[customer.id] ?? {};
+    const amount = String(input.amount ?? '').trim();
+    const comment = String(input.comment ?? '').trim();
+    if (!/^(?:0|[1-9]\d{0,17})(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) {
+      onError('Enter a valid penalty amount greater than zero.');
+      return;
+    }
+    if (!comment) {
+      onError('Enter a reason for the customer penalty.');
+      return;
+    }
+    if (!window.confirm(`Deduct ${money(amount)} from ${customer.fullName}'s available balance?\n\nReason: ${comment}\n\nThe customer will be notified.`)) {
+      return;
+    }
+    setPendingCustomerId(customer.id);
+    onError('');
+    setNotice('');
+    try {
+      penaltyKeys.current[customer.id] ??= crypto.randomUUID();
+      await api(`/admin/customers/${customer.id}/penalties`, {
+        method: 'POST',
+        idempotencyKey: penaltyKeys.current[customer.id],
+        ...jsonBody({ amount, comment }),
+      });
+      delete penaltyKeys.current[customer.id];
+      setPenaltyInputs((current) => ({ ...current, [customer.id]: { amount: '', comment: '' } }));
+      setNotice(`Deducted ${money(amount)} from ${customer.fullName}. They were notified.`);
+      await loadCustomers(pagination.page);
+    } catch (cause) {
+      onError(cause.message);
+    } finally {
+      setPendingCustomerId(null);
     }
   }
 
@@ -1134,7 +1195,7 @@ function AdminCustomersPage({ customers: initialCustomers, paymentMethods, onErr
       )}
 
       {customers.length ? (
-        <div className='table-wrap'>
+        <div className='table-wrap admin-compact-table admin-customers-table'>
           <table>
             <thead>
               <tr>
@@ -1144,6 +1205,7 @@ function AdminCustomersPage({ customers: initialCustomers, paymentMethods, onErr
                 <th>Wallet Balance</th>
                 <th>Referral</th>
                 <th>Withdrawal accounts</th>
+                <th>Penalty</th>
                 <th>Registered</th>
                 <th>Customer actions</th>
               </tr>
@@ -1207,6 +1269,42 @@ function AdminCustomersPage({ customers: initialCustomers, paymentMethods, onErr
                       )}
                     </section>
                   )) : '—'}</td>
+                  <td>
+                    {customer.role === 'CUSTOMER' ? (
+                      <form className='customer-penalty-form' onSubmit={(event) => applyPenalty(event, customer)}>
+                        <label>
+                          <span>Amount (ETB)</span>
+                          <input
+                            type='number'
+                            min='0.01'
+                            step='0.01'
+                            value={penaltyInputs[customer.id]?.amount ?? ''}
+                            onChange={(event) => setPenaltyInputs((current) => ({
+                              ...current,
+                              [customer.id]: { ...current[customer.id], amount: event.target.value },
+                            }))}
+                            required
+                          />
+                        </label>
+                        <label>
+                          <span>Reason</span>
+                          <textarea
+                            value={penaltyInputs[customer.id]?.comment ?? ''}
+                            onChange={(event) => setPenaltyInputs((current) => ({
+                              ...current,
+                              [customer.id]: { ...current[customer.id], comment: event.target.value },
+                            }))}
+                            maxLength={1000}
+                            rows={2}
+                            required
+                          />
+                        </label>
+                        <button className='secondary-button' type='submit' disabled={pendingCustomerId === customer.id}>
+                          {pendingCustomerId === customer.id ? 'Applying…' : 'Deduct & notify'}
+                        </button>
+                      </form>
+                    ) : '—'}
+                  </td>
                   <td>{new Date(customer.registeredAt).toLocaleDateString()}</td>
                   <td>
                     <div className='form-stack' style={{ gap: '6px' }}>
@@ -1219,6 +1317,14 @@ function AdminCustomersPage({ customers: initialCustomers, paymentMethods, onErr
                       >
                         View details
                       </button>
+                      {customer.role === 'CUSTOMER' && (
+                        <Link
+                          className='secondary-button admin-customer-chat-link'
+                          to={`/admin/support/chat?customerId=${encodeURIComponent(customer.id)}&customerName=${encodeURIComponent(customer.fullName)}`}
+                        >
+                          <MessageCircle size={14} aria-hidden='true' /> Chat
+                        </Link>
+                      )}
 
                       {customer.role === 'CUSTOMER' && (
                         resetCustomerId === customer.id ? (
@@ -2393,6 +2499,8 @@ function AdminRechargesPage() {
   const [limit, setLimit] = useState(10);
   const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
+  const [notes, setNotes] = useState({});
+  const [pendingId, setPendingId] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -2434,12 +2542,25 @@ function AdminRechargesPage() {
     });
   };
 
-  const review = async (id, action, note = '') => {
+  const review = async (id, action, noteOverride = '') => {
+    const note = (noteOverride || notes[id] || '').trim();
+    if (action === 'reject' && !note) {
+      setError('Enter a reason before rejecting this recharge.');
+      return;
+    }
+    if (pendingId) return;
+    setPendingId(id);
     try {
       await api(`/admin/recharges/${id}/${action}`, { method: 'POST', ...jsonBody({ note }) });
+      setNotes((current) => ({ ...current, [id]: '' }));
       await refresh();
     } catch (cause) {
+      if (cause.code === 'INVALID_STATUS') {
+        await refresh();
+      }
       setError(cause.message);
+    } finally {
+      setPendingId('');
     }
   };
 
@@ -2463,7 +2584,7 @@ function AdminRechargesPage() {
       />
       {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
       {loading ? <p className='empty-state' role='status'>Loading recharge requests…</p> : items.length ? (
-        <div className='table-wrap'>
+        <div className='table-wrap admin-compact-table admin-recharges-table'>
           <table>
             <thead>
               <tr><th>User</th><th>Phone Number</th><th>Amount</th><th>Method</th><th>Sender</th><th>Reference</th><th>Status</th><th>Proof</th><th>Actions</th></tr>
@@ -2491,11 +2612,37 @@ function AdminRechargesPage() {
                     ) : 'No proof'}
                   </td>
                   <td>
-                    <div className='button-row compact'>
-                      <button type='button' className='secondary-button' onClick={() => review(item.id, 'review')}>Under review</button>
-                      <button type='button' className='primary-button' onClick={() => review(item.id, 'approve')}>Approve</button>
-                      <button type='button' className='secondary-button' onClick={() => review(item.id, 'reject', 'Rejected by admin')}>Reject</button>
-                    </div>
+                    {['PENDING', 'UNDER_REVIEW', 'APPROVED'].includes(item.status) ? (
+                      <div className='form-stack'>
+                        <label className='admin-recharge-note'>
+                          <span>
+                            {item.status === 'APPROVED' ? 'Reversal reason' : 'Admin comment'}
+                            <small>{item.status === 'APPROVED' ? ' (required; removes credited amount)' : ' (required to reject)'}</small>
+                          </span>
+                          <textarea
+                            aria-label={`Admin comment and rejection reason for ${item.fullName || item.userId}`}
+                            value={notes[item.id] ?? ''}
+                            onChange={(event) => setNotes((current) => ({ ...current, [item.id]: event.target.value }))}
+                            placeholder={item.status === 'APPROVED' ? 'Explain why this approved recharge should be reversed' : 'Write a comment or rejection reason'}
+                            maxLength={1000}
+                            rows={2}
+                          />
+                        </label>
+                        <div className='button-row compact'>
+                          {item.status !== 'APPROVED' && (
+                            <>
+                              <button type='button' className='secondary-button' disabled={pendingId !== ''} onClick={() => review(item.id, 'review')}>Under review</button>
+                              <button type='button' className='primary-button' disabled={pendingId !== ''} onClick={() => review(item.id, 'approve')}>Approve</button>
+                            </>
+                          )}
+                          <button type='button' className='secondary-button' disabled={pendingId !== ''} onClick={() => review(item.id, 'reject')}>
+                            {pendingId === item.id ? 'Rejecting…' : item.status === 'APPROVED' ? 'Reject & reverse' : 'Reject'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <span>{item.adminNote || 'Already resolved'}</span>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -2503,7 +2650,7 @@ function AdminRechargesPage() {
           </table>
         </div>
       ) : <Empty>No recharge requests found.</Empty>}
-      <AdminTablePagination pagination={pagination} page={page} setPage={setPage} loading={loading} />
+      <AdminTablePagination pagination={pagination} page={page} setPage={setPage} loading={loading || pendingId !== ''} />
       {proofPreview && (
         <div className='proof-viewer-backdrop' role='presentation' onClick={(event) => {
           if (event.target === event.currentTarget) setProofPreview(null);
@@ -2651,7 +2798,7 @@ function AdminWithdrawalsPage() {
       {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
       {notice && <SuccessToast message={notice} onDismiss={() => setNotice('')} />}
       {loading ? <p className='empty-state' role='status'>Loading withdrawal requests…</p> : items.length ? (
-        <div className='table-wrap'>
+        <div className='table-wrap admin-compact-table admin-withdrawals-table'>
           <table>
             <thead>
               <tr><th>Customer</th><th>Amount</th><th>Fee / Net</th><th>Full payout details</th><th>Status</th><th>Requested</th><th>Admin note</th><th>Actions</th></tr>
@@ -3352,24 +3499,39 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [currentVipInfo, setCurrentVipInfo] = useState({ loading: true, purchase: null });
+  const latestNotificationId = useRef(null);
+  const onCustomerSuccessRef = useRef(onCustomerSuccess);
+  onCustomerSuccessRef.current = onCustomerSuccess;
   const currentPath = location.pathname || '/dashboard';
   useEffect(() => {
     let active = true;
-    const refreshUnreadCount = () => {
-      api('/notifications/unread-count')
-        .then(({ unreadCount }) => {
-          if (active) setUnreadNotificationCount(unreadCount);
-        })
-        .catch((cause) => {
-          if (active) setError(cause.message);
-        });
+    const refreshUnreadCount = async () => {
+      try {
+        const [unread, latest] = await Promise.all([
+          api('/notifications/unread-count'),
+          api('/notifications?page=1&limit=1'),
+        ]);
+        if (!active) return;
+        setUnreadNotificationCount(unread.unreadCount);
+        const latestItem = latest.items[0];
+        if (latestNotificationId.current === null) {
+          latestNotificationId.current = latestItem?.id ?? '';
+        } else if (latestItem?.id && latestItem.id !== latestNotificationId.current) {
+          latestNotificationId.current = latestItem.id;
+          if (!latestItem.isRead) {
+            onCustomerSuccessRef.current(`${latestItem.title}: ${latestItem.message}`);
+          }
+        }
+      } catch (cause) {
+        if (active) setError(cause.message);
+      }
     };
     const refreshOnFocus = () => {
       if (document.visibilityState === 'visible') refreshUnreadCount();
     };
 
     refreshUnreadCount();
-    const interval = window.setInterval(refreshUnreadCount, 60000);
+    const interval = window.setInterval(refreshUnreadCount, 15000);
     window.addEventListener('focus', refreshOnFocus);
     document.addEventListener('visibilitychange', refreshOnFocus);
     return () => {
@@ -3408,6 +3570,7 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
     if (currentPath === '/notifications') return 'Notifications';
     if (currentPath === '/profile') return 'Personal Information';
     if (currentPath === '/support') return 'Support';
+    if (currentPath === '/support/chat') return 'Online chat';
     if (currentPath === '/download') return 'Download App';
     return 'Member portal';
   })();
@@ -3475,6 +3638,8 @@ function ProtectedCustomerApp({ user, dashboard, support, products, team, member
         return <ProfilePage methods={methods} support={support} busy={busy} onSaveAccount={onSaveAccount} />;
       case '/support':
         return <SupportPage />;
+      case '/support/chat':
+        return <SupportChatPage support={support} />;
       case '/download':
         return <CustomerDownloadPage support={support} />;
       default:
@@ -3774,30 +3939,40 @@ function AuthScreen({ auth, setAuth, mode, onSubmit, onSwitchMode, busy, error, 
 function WelcomePromotionPage({ registrationBonus, support }) {
   const navigate = useNavigate();
   return (
-    <section className='welcome-promotion'>
-      <div className='welcome-promotion-art'>
-        <img src={assetUrl(support?.welcomeImageUrl) || welcomePromotionImage} alt={support?.welcomeImageAlt || 'MKM welcome illustration with a rising plant and gift box'} />
-      </div>
-      <div className='welcome-promotion-copy'>
-        <p className='eyebrow'>{support?.welcomeEyebrow || 'YOUR MEMBER JOURNEY STARTS HERE'}</p>
-        <h2>{support?.welcomeTitle || 'Welcome to MKM'}</h2>
-        <p className='welcome-promotion-intro'>{support?.welcomeIntro || 'We’re glad you’re here. Explore your account, products, and member benefits from one place.'}</p>
-        <div className='welcome-promotion-bonus'>
-          <span>{support?.welcomeBonusLabel || 'Welcome bonus'}</span>
-          <strong>{money(registrationBonus)}</strong>
+    <section className='welcome-screen'>
+      <button className='welcome-close-button' type='button' onClick={() => navigate('/dashboard')} aria-label='Close welcome page'>
+        <X size={21} />
+      </button>
+      <section className='welcome-promotion welcome-screen-card'>
+        <div className='welcome-promotion-art'>
+          <img src={assetUrl(support?.welcomeImageUrl) || welcomePromotionImage} alt={support?.welcomeImageAlt || 'MKM welcome illustration with a rising plant and gift box'} />
         </div>
-        <div className='welcome-promotion-example'>
-          <p className='eyebrow'>{support?.welcomeExampleTitle || 'PRODUCT EXAMPLE'}</p>
-          <div className='welcome-example-values'>
-            <div><span>Example product price</span><strong>{money(support?.welcomeExamplePrice ?? 300)}</strong></div>
-            <div><span>Example daily earnings</span><strong>{money(support?.welcomeExampleDailyEarnings ?? 72)}</strong></div>
+        <div className='welcome-promotion-copy'>
+          <p className='eyebrow'>{support?.welcomeEyebrow || 'YOUR MEMBER JOURNEY STARTS HERE'}</p>
+          <h2>{support?.welcomeTitle || 'Welcome to MKM'}</h2>
+          <p className='welcome-promotion-intro'>{support?.welcomeIntro || 'We’re glad you’re here. Explore your account, products, and member benefits from one place.'}</p>
+          <div className='welcome-promotion-bonus'>
+            <span>{support?.welcomeBonusLabel || 'Welcome bonus'}</span>
+            <strong>{money(registrationBonus)}</strong>
           </div>
-          <small>{support?.welcomeDisclaimer || 'Illustrative example only. Actual product terms and earnings depend on the product details shown before purchase.'}</small>
+          <div className='welcome-promotion-example'>
+            <p className='eyebrow'>{support?.welcomeExampleTitle || 'PRODUCT EXAMPLE'}</p>
+            <div className='welcome-example-values'>
+              <div><span>Example product price</span><strong>{money(support?.welcomeExamplePrice ?? 300)}</strong></div>
+              <div><span>Example daily earnings</span><strong>{money(support?.welcomeExampleDailyEarnings ?? 72)}</strong></div>
+            </div>
+            <small>{support?.welcomeDisclaimer || 'Illustrative example only. Actual product terms and earnings depend on the product details shown before purchase.'}</small>
+          </div>
+          <div className='welcome-page-actions'>
+            <button className='primary-button welcome-home-button' type='button' onClick={() => navigate('/products')}>
+              Explore Products <span>↗</span>
+            </button>
+            <button className='secondary-button welcome-home-secondary' type='button' onClick={() => navigate('/dashboard')}>
+              {support?.welcomeHomeButtonLabel || 'Go to Home'}
+            </button>
+          </div>
         </div>
-        <button className='primary-button welcome-home-button' type='button' onClick={() => navigate('/dashboard')}>
-          {support?.welcomeHomeButtonLabel || 'Go to Home'} <span>↗</span>
-        </button>
-      </div>
+      </section>
     </section>
   );
 }
@@ -3805,6 +3980,7 @@ function WelcomePromotionPage({ registrationBonus, support }) {
 function Overview({ data, products = [], busy, onPurchase, onCopy, support = {} }) {
   const wallet = data?.wallet;
   const [chatOpen, setChatOpen] = useState(false);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
   const homeProducts = [...products];
   const vipFourIndex = homeProducts.findIndex((product) => /^V(?:I)?P\s*4\b/i.test(String(product.name)));
   const vipFiveIndex = homeProducts.findIndex((product) => /^V(?:I)?P\s*5\b/i.test(String(product.name)));
@@ -3822,6 +3998,24 @@ function Overview({ data, products = [], busy, onPurchase, onCopy, support = {} 
   const customerSupportExternal = customerSupportUrl.startsWith('http');
   const officialGroupExternal = officialGroupUrl.startsWith('http');
 
+  useEffect(() => {
+    let active = true;
+    const refreshUnreadChatCount = async () => {
+      try {
+        const result = await api('/support/chat/unread-count');
+        if (active) setUnreadChatCount(result.unreadCount);
+      } catch (cause) {
+        if (active) console.error('Unable to refresh unread support messages:', cause);
+      }
+    };
+    refreshUnreadChatCount();
+    const interval = window.setInterval(refreshUnreadChatCount, 15000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
   return (
     <>
       <section className='welcome-row'>
@@ -3837,6 +4031,10 @@ function Overview({ data, products = [], busy, onPurchase, onCopy, support = {} 
               <strong>How can we help?</strong>
               <button type='button' onClick={() => setChatOpen(false)} aria-label='Close chat options'><X size={17} /></button>
             </div>
+            <Link to='/support/chat' onClick={() => setChatOpen(false)} aria-label={unreadChatCount > 0 ? `Online chat, ${unreadChatCount} unread ${unreadChatCount === 1 ? 'message' : 'messages'}` : 'Online chat'}>
+              <MessageCircle size={18} />
+              <span>Online chat{unreadChatCount > 0 ? ` (${unreadChatCount > 99 ? '99+' : unreadChatCount} unread)` : ''}</span>
+            </Link>
             {officialGroupExternal ? (
               <a href={officialGroupUrl} target='_blank' rel='noreferrer' onClick={() => setChatOpen(false)}>
                 <Users size={18} />
@@ -3862,14 +4060,17 @@ function Overview({ data, products = [], busy, onPurchase, onCopy, support = {} 
           </section>
         )}
         <button
-          className='online-chat-icon'
+          className={`online-chat-icon ${unreadChatCount > 0 ? 'has-unread' : ''}`}
           type='button'
           aria-label={chatOpen ? 'Close chat options' : 'Open chat options'}
           aria-expanded={chatOpen}
           onClick={() => setChatOpen((open) => !open)}
         >
-          {chatOpen ? <X size={22} /> : (
-            <MessageCircle size={22} />
+          {chatOpen ? <X size={22} /> : <MessageCircle size={22} />}
+          {!chatOpen && unreadChatCount > 0 && (
+            <span className='online-chat-unread-badge' aria-hidden='true'>
+              {unreadChatCount > 99 ? '99+' : unreadChatCount}
+            </span>
           )}
         </button>
       </div>
@@ -5072,8 +5273,22 @@ function TransactionsPage() {
 
 function NotificationsPage({ onMarkRead }) {
   const [items, setItems] = useState({ items: [], pagination: { total: 0 } });
+  const [error, setError] = useState('');
   useEffect(() => {
-    api('/notifications?page=1&limit=25').then(setItems).catch(() => setItems({ items: [], pagination: { total: 0 } }));
+    let active = true;
+    api('/notifications?page=1&limit=25')
+      .then((result) => {
+        if (active) {
+          setItems(result);
+          setError('');
+        }
+      })
+      .catch((cause) => {
+        if (active) setError(cause.message);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   async function markRead(id) {
@@ -5093,6 +5308,7 @@ function NotificationsPage({ onMarkRead }) {
           <h3>Recent messages</h3>
         </div>
       </div>
+      {error && <ErrorToast message={error} onDismiss={() => setError('')} />}
       {items.items.length ? (
         <div className='history-list'>
           {items.items.map((item) => (
@@ -5684,6 +5900,311 @@ function SupportPage() {
           ) : null}
         </>
       ) : <Empty>Support information is currently unavailable.</Empty>}
+    </section>
+  );
+}
+
+function SupportChatPage({ support = {} }) {
+  const supportLinks = [
+    {
+      label: support.customerSupportLabel || 'Customer Support',
+      href: support.customerSupportUrl,
+      enabled: support.customerSupportEnabled,
+      Icon: ShieldCheck,
+    },
+    {
+      label: support.officialGroupLabel || 'Official Group',
+      href: support.officialGroupUrl,
+      enabled: support.officialGroupEnabled,
+      Icon: Users,
+    },
+  ].filter(({ enabled, href }) => enabled !== false && href);
+
+  return (
+    <section className='surface support-chat-page'>
+      <header className='support-chat-welcome'>
+        <span className='support-chat-avatar'><UserCircle size={27} strokeWidth={1.7} /></span>
+        <div className='support-chat-welcome-copy'>
+          <p className='eyebrow'>MKM CUSTOMER CARE</p>
+          <h2>Welcome to support</h2>
+          <p>How can we help you today? Send us a message and our team will reply here.</p>
+        </div>
+      </header>
+      {supportLinks.length > 0 && (
+        <nav className='support-chat-links' aria-label='Other support options'>
+          {supportLinks.map(({ label, href, Icon }) => {
+            const external = /^https?:\/\//i.test(href);
+            const content = <><Icon size={17} /><span>{label}</span></>;
+            return external ? (
+              <a className='support-chat-link' href={href} target='_blank' rel='noreferrer' key={label}>{content}</a>
+            ) : (
+              <Link className='support-chat-link' to={href} key={label}>{content}</Link>
+            );
+          })}
+        </nav>
+      )}
+      <SupportChatConversation
+        messagesUrl='/support/chat/messages'
+        sendUrl='/support/chat/messages'
+        viewerRole='CUSTOMER'
+        attachmentUrlFor={(messageId) => `/api/support/chat/messages/${messageId}/attachment`}
+      />
+    </section>
+  );
+}
+
+function SupportChatConversation({ messagesUrl, sendUrl, viewerRole, attachmentUrlFor, customerName }) {
+  const [messages, setMessages] = useState([]);
+  const [text, setText] = useState('');
+  const [file, setFile] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const messageListRef = useRef(null);
+  const shouldScrollRef = useRef(true);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        const latest = await api(messagesUrl);
+        if (active) {
+          const list = messageListRef.current;
+          shouldScrollRef.current = !list || list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+          setMessages(latest);
+          setError('');
+        }
+      } catch (cause) {
+        if (active) setError(cause.message);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    refresh();
+    const interval = window.setInterval(refresh, 8000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [messagesUrl]);
+
+  useEffect(() => {
+    const list = messageListRef.current;
+    if (list && shouldScrollRef.current) list.scrollTop = list.scrollHeight;
+  }, [messages]);
+
+  async function submitMessage(event) {
+    event.preventDefault();
+    if (!text.trim() && !file) return;
+    const formElement = event.currentTarget;
+    const payload = new FormData();
+    if (text.trim()) payload.append('text', text.trim());
+    if (file) payload.append('file', file);
+    setSending(true);
+    setError('');
+    try {
+      await api(sendUrl, { method: 'POST', body: payload });
+      setText('');
+      setFile(null);
+      formElement.reset();
+      shouldScrollRef.current = true;
+      setMessages(await api(messagesUrl));
+    } catch (cause) {
+      setError(cause.message);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <div className='support-chat-conversation'>
+      <div className='support-chat-messages' role='log' aria-live='polite' aria-label='Chat messages' ref={messageListRef}>
+        {loading ? <Empty>Loading messages…</Empty> : messages.length === 0 ? (
+          <Empty>No messages yet. Send a message and our team will get back to you.</Empty>
+        ) : messages.map((message) => {
+          const isMine = message.senderRole === viewerRole;
+          return (
+            <article className={`support-chat-message ${isMine ? 'is-mine' : ''}`} key={message.id}>
+              <div className='support-chat-message-meta'>
+                <strong>{isMine ? 'You' : (customerName || 'MKM Support')}</strong>
+                <time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleString()}</time>
+              </div>
+              {message.text && <p>{message.text}</p>}
+              {message.hasAttachment && (
+                ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(message.attachmentMime) ? (
+                  <SupportChatImage
+                    src={assetUrl(attachmentUrlFor(message.id))}
+                    downloadUrl={assetUrl(`${attachmentUrlFor(message.id)}?download=1`)}
+                    name={message.attachmentName || 'Attached image'}
+                  />
+                ) : (
+                  <a className='support-chat-attachment' href={assetUrl(attachmentUrlFor(message.id))}>
+                    <FileText size={16} />
+                    <span>{message.attachmentName || 'Download attachment'}</span>
+                    <ArrowDownToLine size={15} />
+                  </a>
+                )
+              )}
+            </article>
+          );
+        })}
+      </div>
+      {error && <p className='support-chat-error' role='alert'>{error}</p>}
+      <form className='support-chat-composer' onSubmit={submitMessage}>
+        <label className='support-chat-input-label' htmlFor='support-chat-text'>Message</label>
+        <textarea
+          id='support-chat-text'
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          maxLength={2000}
+          rows={3}
+          placeholder='Write your message…'
+        />
+        <div className='support-chat-composer-actions'>
+          <label className='support-chat-file-button'>
+            <Paperclip size={17} />
+            <span>{file ? file.name : 'Attach file'}</span>
+            <input
+              type='file'
+              accept='.jpg,.jpeg,.png,.webp,.gif,.pdf,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.md'
+              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+            />
+          </label>
+          <small>Up to 5 MB</small>
+          <button className='primary-button' type='submit' disabled={sending || (!text.trim() && !file)}>
+            <Send size={16} /> {sending ? 'Sending…' : 'Send'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function SupportChatImage({ src, downloadUrl, name }) {
+  const [zoom, setZoom] = useState(1);
+  return (
+    <div className='support-chat-image'>
+      <div className='support-chat-image-controls'>
+        <span>{name}</span>
+        <button
+          type='button'
+          onClick={() => setZoom((current) => Math.max(0.5, Number((current - 0.25).toFixed(2))))}
+          disabled={zoom <= 0.5}
+          aria-label={`Zoom out ${name}`}
+        >
+          <ZoomOut size={16} />
+        </button>
+        <button
+          type='button'
+          onClick={() => setZoom((current) => Math.min(3, Number((current + 0.25).toFixed(2))))}
+          disabled={zoom >= 3}
+          aria-label={`Zoom in ${name}`}
+        >
+          <ZoomIn size={16} />
+        </button>
+        <a href={downloadUrl} aria-label={`Download ${name}`}><ArrowDownToLine size={16} /></a>
+      </div>
+      <div className='support-chat-image-viewport'>
+        <img src={src} alt={name} crossOrigin='use-credentials' style={{ width: `${zoom * 100}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function AdminSupportInboxPage() {
+  const location = useLocation();
+  const [conversations, setConversations] = useState([]);
+  const [selectedId, setSelectedId] = useState(() => new URLSearchParams(location.search).get('customerId') ?? '');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setSelectedId(new URLSearchParams(location.search).get('customerId') ?? '');
+  }, [location.search]);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        const latest = await api('/admin/support/chats');
+        if (active) {
+          setConversations(latest);
+          setError('');
+        }
+      } catch (cause) {
+        if (active) setError(cause.message);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    refresh();
+    const interval = window.setInterval(refresh, 15000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  const selected = conversations.find(({ customerId }) => customerId === selectedId)
+    ?? (selectedId ? {
+      customerId: selectedId,
+      customerName: new URLSearchParams(location.search).get('customerName') || 'Customer',
+      phoneNumber: '',
+      unreadCount: 0,
+    } : null);
+  return (
+    <section className='surface support-chat-inbox'>
+      <div className='surface-heading'>
+        <div>
+          <p className='eyebrow'>CUSTOMER MESSAGES</p>
+          <h3>Online chat inbox</h3>
+        </div>
+      </div>
+      {error && <p className='support-chat-error' role='alert'>{error}</p>}
+      <div className='support-chat-inbox-layout'>
+        <div className='support-chat-inbox-list' aria-label='Customer conversations'>
+          {loading && conversations.length === 0 ? <Empty>Loading conversations…</Empty> : conversations.length === 0 ? (
+            <Empty>No customer chats yet.</Empty>
+          ) : conversations.map((conversation) => (
+            <button
+              type='button'
+              key={conversation.customerId}
+              className={`support-chat-inbox-item ${selectedId === conversation.customerId ? 'is-selected' : ''}`}
+              onClick={() => {
+                setSelectedId(conversation.customerId);
+                setConversations((current) => current.map((item) => item.customerId === conversation.customerId
+                  ? { ...item, unreadCount: 0 }
+                  : item));
+              }}
+            >
+              <span className='support-chat-inbox-item-heading'>
+                <strong>{conversation.customerName}</strong>
+                {conversation.unreadCount > 0 && <span className='support-chat-unread'>{conversation.unreadCount}</span>}
+              </span>
+              <small>{conversation.phoneNumber}</small>
+              <span className='support-chat-preview'>{conversation.lastText || conversation.lastAttachmentName || 'Attachment'}</span>
+            </button>
+          ))}
+        </div>
+        <div className='support-chat-inbox-thread'>
+          {selected ? (
+            <>
+              <div className='support-chat-customer-heading'>
+                <strong>{selected.customerName}</strong>
+                <span>{selected.phoneNumber}</span>
+              </div>
+              <SupportChatConversation
+                key={selected.customerId}
+                messagesUrl={`/admin/support/chats/${selected.customerId}/messages`}
+                sendUrl={`/admin/support/chats/${selected.customerId}/messages`}
+                viewerRole='ADMIN'
+                customerName={selected.customerName}
+                attachmentUrlFor={(messageId) => `/api/admin/support/chats/${selected.customerId}/messages/${messageId}/attachment`}
+              />
+            </>
+          ) : <Empty>Select a customer conversation to view and reply.</Empty>}
+        </div>
+      </div>
     </section>
   );
 }
